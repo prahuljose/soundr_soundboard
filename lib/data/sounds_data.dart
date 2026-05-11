@@ -66,6 +66,38 @@ class SoundsData {
     SoundModel(id: 's54', name: 'Baba Booey',  file: 'baba_booey.wav',  category: 'Memes',     emoji: '📢'),
 
     SoundModel(id: 's55', name: 'Based',       file: 'based.wav',       category: 'Memes',     emoji: '🗿'),
+
+    SoundModel(id: 's56', name: 'Amogus',                 file: 'amogus.wav',                         category: 'Memes',      emoji: '🧑‍🚀'),
+    SoundModel(id: 's57', name: 'Anita Max Wynn Drake',  file: 'anita_max_wynn_drake.wav',          category: 'Memes',      emoji: '🎤'),
+    SoundModel(id: 's58', name: 'Cat Laugh Meme',        file: 'cat_laugh_meme.wav',                category: 'Animals',    emoji: '🐱'),
+    SoundModel(id: 's59', name: 'Fire In The Hole',      file: 'fire_in_the_hole.wav',              category: 'Gaming',     emoji: '🔥'),
+    SoundModel(id: 's60', name: 'Game Over Mario',       file: 'game_over_super_mario.wav',         category: 'Gaming',     emoji: '🎮'),
+
+    SoundModel(id: 's61', name: 'Goku Prowler',          file: 'goku_prowler.wav',                  category: 'Anime',      emoji: '⚡'),
+    SoundModel(id: 's62', name: 'Goofy',                 file: 'goofy.wav',                          category: 'Memes',      emoji: '🤪'),
+    SoundModel(id: 's63', name: 'Gunshot',               file: 'gunshot.wav',                        category: 'Effects',    emoji: '🔫'),
+    SoundModel(id: 's64', name: 'Heheha Clash Royale',   file: 'hehehe_ha_clash_royale.wav',        category: 'Gaming',     emoji: '👑'),
+    SoundModel(id: 's65', name: 'I’m In Danger',         file: 'im_in_danger.wav',                  category: 'Memes',      emoji: '😬'),
+
+    SoundModel(id: 's66', name: 'Ferris Wheel Shape',    file: 'im_not_shaped_like_a_ferris_wheel.wav', category: 'Memes', emoji: '🎡'),
+    SoundModel(id: 's67', name: 'Lego Yoda Death',       file: 'lego_yoda_death.wav',               category: 'Memes',      emoji: '🟩'),
+    SoundModel(id: 's68', name: 'Lie Detector Wrong',    file: 'lie_detector_wrong.wav',            category: 'Effects',    emoji: '🚨'),
+    SoundModel(id: 's69', name: 'Minecraft Cave',        file: 'minecraft_cave_noise.wav',          category: 'Gaming',     emoji: '⛏️'),
+    SoundModel(id: 's70', name: 'No God Please No',      file: 'no_god_no_please_god.wav',          category: 'Memes',      emoji: '🙅'),
+
+    SoundModel(id: 's71', name: 'Nom Nom Nom',           file: 'nom_nom_nom.wav',                   category: 'Memes',      emoji: '🍔'),
+    SoundModel(id: 's72', name: 'Pluh',                  file: 'pluh.wav',                           category: 'Memes',      emoji: '🫤'),
+    SoundModel(id: 's73', name: 'Pornhub Intro',         file: 'pornhub_intro.wav',                 category: 'Memes',      emoji: '🟧'),
+    SoundModel(id: 's74', name: 'Romantic',              file: 'romantic.wav',                       category: 'Music',      emoji: '❤️'),
+    SoundModel(id: 's75', name: 'Shut Up',               file: 'shut_up.wav',                        category: 'Reactions',  emoji: '🤫'),
+
+    SoundModel(id: 's76', name: 'Spit On That Thang',    file: 'spit_on_that_thang.wav',            category: 'Memes',      emoji: '🗣️'),
+    SoundModel(id: 's77', name: 'Spongebob',             file: 'spongebob.wav',                      category: 'Cartoons',   emoji: '🧽'),
+    SoundModel(id: 's78', name: 'W In The Chat Drake',   file: 'w_in_the_chat_drake.wav',           category: 'Memes',      emoji: '🏆'),
+    SoundModel(id: 's79', name: 'What Are You Doing',    file: 'what_are_you_doing_step_bro.wav',   category: 'Memes',      emoji: '🤨'),
+    SoundModel(id: 's80', name: 'Why Are You Running',   file: 'why_are_you_running.wav',           category: 'Memes',      emoji: '🏃'),
+
+    SoundModel(id: 's81', name: 'Windows USB Sound',     file: 'windows_10_usb_sound.wav',          category: 'UI',         emoji: '💻'),
   ]
 
   ;

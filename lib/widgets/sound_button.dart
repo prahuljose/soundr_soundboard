@@ -13,7 +13,6 @@ class SoundButton extends StatefulWidget {
   final int stopSignal;
 
   const SoundButton({
-
     super.key,
 
     required this.sound,
@@ -22,7 +21,6 @@ class SoundButton extends StatefulWidget {
 
     required this.duration,
     required this.stopSignal,
-
   });
 
   @override
@@ -42,6 +40,7 @@ class _SoundButtonState extends State<SoundButton>
   Timer? _timer;
 
   final Random _random = Random();
+
   //late final double duration;
 
   @override
@@ -56,12 +55,7 @@ class _SoundButtonState extends State<SoundButton>
     _scale = Tween<double>(
       begin: 1.0,
       end: 0.92,
-    ).animate(
-      CurvedAnimation(
-        parent: _pressController,
-        curve: Curves.easeOut,
-      ),
-    );
+    ).animate(CurvedAnimation(parent: _pressController, curve: Curves.easeOut));
 
     _waveController = AnimationController(
       vsync: this,
@@ -79,31 +73,23 @@ class _SoundButtonState extends State<SoundButton>
 
   @override
   void didUpdateWidget(covariant SoundButton oldWidget) {
-
     super.didUpdateWidget(oldWidget);
 
     if (oldWidget.stopSignal != widget.stopSignal) {
-
       _timer?.cancel();
 
       setState(() {
-
         _isPlaying = false;
 
         _remaining = 0;
-
       });
-
     }
-
   }
 
   void _handleTap() {
     HapticFeedback.lightImpact();
 
-    _pressController.forward().then(
-          (_) => _pressController.reverse(),
-    );
+    _pressController.forward().then((_) => _pressController.reverse());
 
     widget.onTap();
 
@@ -114,18 +100,15 @@ class _SoundButtonState extends State<SoundButton>
     _timer?.cancel();
 
     setState(() {
-
       _isPlaying = true;
 
       _remaining = widget.duration;
-
     });
 
     const tick = Duration(milliseconds: 10);
 
     _timer = Timer.periodic(tick, (timer) {
-      final next =
-          _remaining - (tick.inMilliseconds / 1000);
+      final next = _remaining - (tick.inMilliseconds / 1000);
 
       if (next <= 0) {
         timer.cancel();
@@ -178,52 +161,53 @@ class _SoundButtonState extends State<SoundButton>
         scale: _scale,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: _bgColor,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: (_isPlaying
-                  ? activeColor
-                  : _accentColor)
-                  .withOpacity(0.5),
+              color: (_isPlaying ? activeColor : _accentColor).withOpacity(0.5),
             ),
             boxShadow: _isPlaying
                 ? [
-              BoxShadow(
-                color: activeColor.withOpacity(0.25),
-                blurRadius: 18,
-                spreadRadius: 1,
-              ),
-            ]
+                    BoxShadow(
+                      color: activeColor.withOpacity(0.25),
+                      blurRadius: 18,
+                      spreadRadius: 1,
+                    ),
+                  ]
                 : [],
           ),
           child: Column(
-            crossAxisAlignment:
-            CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
                     widget.sound.emoji,
-                    style: const TextStyle(
-                      fontSize: 28,
-                    ),
+                    style: const TextStyle(fontSize: 20),
                   ),
-
                 ],
               ),
 
-              const Spacer(),
+              const SizedBox(height: 12),
 
               Text(
                 widget.sound.name,
+
+                maxLines: 2,
+
+                overflow: TextOverflow.ellipsis,
+
                 style: const TextStyle(
                   fontSize: 13,
+
                   fontWeight: FontWeight.w600,
+
                   color: Colors.white,
+
+                  height: 1.1,
                 ),
               ),
 
@@ -236,38 +220,22 @@ class _SoundButtonState extends State<SoundButton>
                     animation: _waveController,
                     builder: (_, __) {
                       return Row(
-                        children: List.generate(
-                          6,
-                              (index) {
-                            final baseHeight =
-                            _isPlaying
-                                ? 4.0 +
-                                _random.nextDouble() *
-                                    9
-                                : 4.0;
+                        children: List.generate(6, (index) {
+                          final baseHeight = _isPlaying
+                              ? 4.0 + _random.nextDouble() * 9
+                              : 4.0;
 
-                            return AnimatedContainer(
-                              duration: const Duration(
-                                milliseconds: 180,
-                              ),
-                              margin:
-                              const EdgeInsets.only(
-                                right: 2,
-                              ),
-                              width: 3,
-                              height: baseHeight,
-                              decoration: BoxDecoration(
-                                color: _isPlaying
-                                    ? activeColor
-                                    : Colors.white24,
-                                borderRadius:
-                                BorderRadius.circular(
-                                  2,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                          return AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            margin: const EdgeInsets.only(right: 2),
+                            width: 3,
+                            height: baseHeight,
+                            decoration: BoxDecoration(
+                              color: _isPlaying ? activeColor : Colors.white24,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          );
+                        }),
                       );
                     },
                   ),
@@ -276,14 +244,11 @@ class _SoundButtonState extends State<SoundButton>
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: _isPlaying
-                          ? activeColor
-                          : Colors.white38,
+                      color: _isPlaying ? activeColor : Colors.white38,
                     ),
                   ),
                 ],
               ),
-
             ],
           ),
         ),
