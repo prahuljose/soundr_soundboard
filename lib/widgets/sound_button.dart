@@ -28,7 +28,7 @@ class _SoundButtonState extends State<SoundButton>
   late AnimationController _waveController;
 
   bool _isPlaying = false;
-  int _remaining = 0;
+  double _remaining = 0;
 
   Timer? _timer;
 
@@ -84,26 +84,28 @@ class _SoundButtonState extends State<SoundButton>
 
     setState(() {
       _isPlaying = true;
-      _remaining = widget.sound.duration;
+      _remaining = widget.sound.duration.toDouble();
     });
 
-    _timer = Timer.periodic(
-      const Duration(seconds: 1),
-          (timer) {
-        if (_remaining <= 1) {
-          timer.cancel();
+    const tick = Duration(milliseconds: 10);
 
-          setState(() {
-            _isPlaying = false;
-            _remaining = 0;
-          });
-        } else {
-          setState(() {
-            _remaining--;
-          });
-        }
-      },
-    );
+    _timer = Timer.periodic(tick, (timer) {
+      final next =
+          _remaining - (tick.inMilliseconds / 1000);
+
+      if (next <= 0) {
+        timer.cancel();
+
+        setState(() {
+          _isPlaying = false;
+          _remaining = 0;
+        });
+      } else {
+        setState(() {
+          _remaining = next;
+        });
+      }
+    });
   }
 
   Color get _bgColor {
@@ -176,16 +178,7 @@ class _SoundButtonState extends State<SoundButton>
                       fontSize: 28,
                     ),
                   ),
-                  Text(
-                    '${_isPlaying ? _remaining : widget.sound.duration}s',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: _isPlaying
-                          ? activeColor
-                          : Colors.white38,
-                    ),
-                  ),
+
                 ],
               ),
 
@@ -202,45 +195,61 @@ class _SoundButtonState extends State<SoundButton>
 
               const SizedBox(height: 10),
 
-              AnimatedBuilder(
-                animation: _waveController,
-                builder: (_, __) {
-                  return Row(
-                    children: List.generate(
-                      12,
-                          (index) {
-                        final baseHeight =
-                        _isPlaying
-                            ? 4.0 +
-                            _random.nextDouble() *
-                                10
-                            : 4.0;
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  AnimatedBuilder(
+                    animation: _waveController,
+                    builder: (_, __) {
+                      return Row(
+                        children: List.generate(
+                          6,
+                              (index) {
+                            final baseHeight =
+                            _isPlaying
+                                ? 4.0 +
+                                _random.nextDouble() *
+                                    9
+                                : 4.0;
 
-                        return AnimatedContainer(
-                          duration: const Duration(
-                            milliseconds: 180,
-                          ),
-                          margin:
-                          const EdgeInsets.only(
-                            right: 2,
-                          ),
-                          width: 3,
-                          height: baseHeight,
-                          decoration: BoxDecoration(
-                            color: _isPlaying
-                                ? activeColor
-                                : Colors.white24,
-                            borderRadius:
-                            BorderRadius.circular(
-                              2,
-                            ),
-                          ),
-                        );
-                      },
+                            return AnimatedContainer(
+                              duration: const Duration(
+                                milliseconds: 180,
+                              ),
+                              margin:
+                              const EdgeInsets.only(
+                                right: 2,
+                              ),
+                              width: 3,
+                              height: baseHeight,
+                              decoration: BoxDecoration(
+                                color: _isPlaying
+                                    ? activeColor
+                                    : Colors.white24,
+                                borderRadius:
+                                BorderRadius.circular(
+                                  2,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                  Text(
+                    '${(_isPlaying ? _remaining : widget.sound.duration).toStringAsFixed(2)}s',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: _isPlaying
+                          ? activeColor
+                          : Colors.white38,
                     ),
-                  );
-                },
+                  ),
+                ],
               ),
+
             ],
           ),
         ),

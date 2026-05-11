@@ -4,7 +4,7 @@ class SoundModel {
   final String file;
   final String category;
   final String emoji;
-  final int duration;
+  final double duration;
 
   const SoundModel({
     required this.id,

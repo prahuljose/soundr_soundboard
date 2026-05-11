@@ -48,10 +48,27 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     SoLoud.instance.deinit();
     super.dispose();
   }
+  final List<SoundHandle> _activeHandles = [];
 
-  void _play(SoundModel sound) {
+  Future<void> _play(SoundModel sound) async {
     final source = _preloaded[sound.id];
-    if (source != null) SoLoud.instance.play(source); // fire & forget
+
+    if (source != null) {
+      final handle = await SoLoud.instance.play(source);
+      _activeHandles.add(handle);
+    }
+  }
+
+  void _stopAll() {
+
+    for (final handle in _activeHandles) {
+
+      SoLoud.instance.stop(handle);
+
+    }
+
+    _activeHandles.clear();
+
   }
 
   List<SoundModel> get _filtered => _selectedCategory == 'All'
@@ -78,7 +95,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           IconButton(
             icon: const Icon(Icons.stop_circle_outlined, color: Colors.white),
             tooltip: 'Stop all',
-            onPressed: () => SoLoud.instance.stopAll(),
+            onPressed: () => _stopAll,
           ),
         ],
       ),
@@ -148,6 +165,3 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   }
 }
 
-extension on SoLoud {
-  void stopAll() {}
-}
