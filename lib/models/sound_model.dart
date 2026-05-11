@@ -4,6 +4,7 @@ class SoundModel {
   final String file;
   final String category;
   final String emoji;
+  final int duration;
 
   const SoundModel({
     required this.id,
@@ -11,5 +12,6 @@ class SoundModel {
     required this.file,
     required this.category,
     required this.emoji,
+    required this.duration,
   });
 }
