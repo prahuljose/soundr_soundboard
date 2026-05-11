@@ -3,6 +3,7 @@ import 'package:flutter_soloud/flutter_soloud.dart';
 import '../data/sounds_data.dart';
 import '../models/sound_model.dart';
 import '../widgets/sound_button.dart';
+import 'package:flutter/services.dart';
 
 class SoundboardScreen extends StatefulWidget {
   const SoundboardScreen({super.key});
@@ -14,7 +15,7 @@ class SoundboardScreen extends StatefulWidget {
 class _SoundboardScreenState extends State<SoundboardScreen> {
   final Map<String, AudioSource> _preloaded = {};
   String _selectedCategory = 'All';
-  bool _ready = true;
+  bool _ready = false;
 
   @override
   void initState() {
@@ -24,10 +25,21 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
   Future<void> _initAudio() async {
     await SoLoud.instance.init();
+
     for (final sound in SoundsData.all) {
+      final bytes = await rootBundle.load(
+        'assets/sounds/raw/${sound.file}',
+      );
+
       _preloaded[sound.id] =
-      await SoLoud.instance.loadAsset('assets/sounds/raw/${sound.file}');
+      await SoLoud.instance.loadMem(
+        sound.file,
+        bytes.buffer.asUint8List(),
+      );
     }
+
+    if (!mounted) return;
+
     setState(() => _ready = true);
   }
 
