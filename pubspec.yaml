@@ -28,7 +28,7 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
-  flutter_soloud: ^2.0.0
+  flutter_soloud: ^3.3.2
   flutter:
     sdk: flutter
 

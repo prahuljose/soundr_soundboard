@@ -16,6 +16,9 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   final Map<String, AudioSource> _preloaded = {};
   String _selectedCategory = 'All';
   bool _ready = false;
+  final Map<String, double> _durations = {};
+  //late double duration;
+  int _stopSignal = 0;
 
   @override
   void initState() {
@@ -31,11 +34,22 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
         'assets/sounds/raw/${sound.file}',
       );
 
-      _preloaded[sound.id] =
-      await SoLoud.instance.loadMem(
+      final source = await SoLoud.instance.loadMem(
         sound.file,
         bytes.buffer.asUint8List(),
       );
+
+      _preloaded[sound.id] = source;
+
+      final duration =
+
+      await SoLoud.instance.getLength(source);
+
+      _durations[sound.id] =
+
+          duration.inMilliseconds / 1000;
+
+
     }
 
     if (!mounted) return;
@@ -59,13 +73,26 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     }
   }
 
-  void _stopAll() {
+  Future<void> _stopAll() async {
 
-    for (final handle in _activeHandles) {
+    for (final handle in _activeHandles.toList()) {
 
-      SoLoud.instance.stop(handle);
+      final valid =
+
+      SoLoud.instance.getIsValidVoiceHandle(handle);
+
+      if (valid) {
+
+        await SoLoud.instance.stop(handle);
+
+      }
 
     }
+    setState(() {
+
+      _stopSignal++;
+
+    });
 
     _activeHandles.clear();
 
@@ -83,7 +110,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
         backgroundColor: const Color(0xFF0E0E0E),
         elevation: 0,
         title: const Text(
-          'Soundr',
+          'Soundr Soundboard',
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w700,
@@ -95,7 +122,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           IconButton(
             icon: const Icon(Icons.stop_circle_outlined, color: Colors.white),
             tooltip: 'Stop all',
-            onPressed: () => _stopAll,
+            onPressed: () async => await _stopAll(),
           ),
         ],
       ),
@@ -151,8 +178,15 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               ),
               itemCount: _filtered.length,
               itemBuilder: (context, i) => SoundButton(
+
                 sound: _filtered[i],
+
+                duration: _durations[_filtered[i].id] ?? 0,
+
+                stopSignal: _stopSignal,
+
                 onTap: () => _play(_filtered[i]),
+
               ),
             ),
           ),

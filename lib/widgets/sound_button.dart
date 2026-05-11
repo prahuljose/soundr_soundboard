@@ -9,11 +9,20 @@ import '../models/sound_model.dart';
 class SoundButton extends StatefulWidget {
   final SoundModel sound;
   final VoidCallback onTap;
+  final double duration;
+  final int stopSignal;
 
   const SoundButton({
+
     super.key,
+
     required this.sound,
+
     required this.onTap,
+
+    required this.duration,
+    required this.stopSignal,
+
   });
 
   @override
@@ -33,6 +42,7 @@ class _SoundButtonState extends State<SoundButton>
   Timer? _timer;
 
   final Random _random = Random();
+  //late final double duration;
 
   @override
   void initState() {
@@ -67,6 +77,27 @@ class _SoundButtonState extends State<SoundButton>
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant SoundButton oldWidget) {
+
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.stopSignal != widget.stopSignal) {
+
+      _timer?.cancel();
+
+      setState(() {
+
+        _isPlaying = false;
+
+        _remaining = 0;
+
+      });
+
+    }
+
+  }
+
   void _handleTap() {
     HapticFeedback.lightImpact();
 
@@ -83,8 +114,11 @@ class _SoundButtonState extends State<SoundButton>
     _timer?.cancel();
 
     setState(() {
+
       _isPlaying = true;
-      _remaining = widget.sound.duration.toDouble();
+
+      _remaining = widget.duration;
+
     });
 
     const tick = Duration(milliseconds: 10);
@@ -238,7 +272,7 @@ class _SoundButtonState extends State<SoundButton>
                     },
                   ),
                   Text(
-                    '${(_isPlaying ? _remaining : widget.sound.duration).toStringAsFixed(2)}s',
+                    '${(_isPlaying ? _remaining : widget.duration).toStringAsFixed(2)}s',
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
