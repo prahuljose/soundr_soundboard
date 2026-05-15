@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Soundr logo: 5 equalizer bars (heights 20, 32.5, 50, 37.5, 25 dp)
+  Centered in the 108×108 adaptive-icon canvas.
+  Bar width = 7dp, gap = 5dp, total group = 55dp wide.
+  Left edge starts at x=26.5, bars bottom at y=79.
+  Rounded tops: radius 3.5dp.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+  <path
+      android:fillColor="#FFFFFF"
+      android:pathData="
+        M 30,59 A 3.5,3.5 0 0 1 33.5,62.5 L 33.5,79 L 26.5,79 L 26.5,62.5 A 3.5,3.5 0 0 1 30,59 Z
+        M 42,46.5 A 3.5,3.5 0 0 1 45.5,50 L 45.5,79 L 38.5,79 L 38.5,50 A 3.5,3.5 0 0 1 42,46.5 Z
+        M 54,29 A 3.5,3.5 0 0 1 57.5,32.5 L 57.5,79 L 50.5,79 L 50.5,32.5 A 3.5,3.5 0 0 1 54,29 Z
+        M 66,41.5 A 3.5,3.5 0 0 1 69.5,45 L 69.5,79 L 62.5,79 L 62.5,45 A 3.5,3.5 0 0 1 66,41.5 Z
+        M 78,54 A 3.5,3.5 0 0 1 81.5,57.5 L 81.5,79 L 74.5,79 L 74.5,57.5 A 3.5,3.5 0 0 1 78,54 Z"/>
+</vector>
