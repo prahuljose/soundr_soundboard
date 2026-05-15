@@ -98,6 +98,48 @@ class SoundsData {
     SoundModel(id: 's80', name: 'Why Are You Running',   file: 'why_are_you_running.wav',           category: 'Memes',      emoji: '🏃'),
 
     SoundModel(id: 's81', name: 'Windows USB Sound',     file: 'windows_10_usb_sound.wav',          category: 'UI',         emoji: '💻'),
+
+    // ── Effects ───────────────────────────────────────────────────────────
+    SoundModel(id: 's82',  name: 'Construction Box',       file: 'construction_tool_box.wav',             category: 'Effects',  emoji: '🔨'),
+    SoundModel(id: 's83',  name: 'Crumpled Paper',         file: 'crumpled_paper.wav',                    category: 'Effects',  emoji: '📄'),
+    SoundModel(id: 's84',  name: 'Clinking Coins',         file: 'clinking_coins.wav',                    category: 'Effects',  emoji: '💰'),
+    SoundModel(id: 's85',  name: 'Alarm Tone',             file: 'alarm_tone.wav',                        category: 'Effects',  emoji: '🚨'),
+    SoundModel(id: 's86',  name: 'Martial Arts Punch',     file: 'martial_arts_fast_punch.wav',           category: 'Effects',  emoji: '🥊'),
+    SoundModel(id: 's87',  name: 'Laser Thunder',          file: 'cinematic_laser_gun_thunder.wav',       category: 'Effects',  emoji: '⚡'),
+    SoundModel(id: 's88',  name: 'Arrow Whoosh',           file: 'arrow_whoosh.wav',                      category: 'Effects',  emoji: '🏹'),
+    SoundModel(id: 's89',  name: 'Air Woosh',              file: 'air_woosh.wav',                         category: 'Effects',  emoji: '💨'),
+
+    // ── Gaming ────────────────────────────────────────────────────────────
+    SoundModel(id: 's90',  name: 'Treasure Collect',       file: 'video_game_treasure.wav',               category: 'Gaming',   emoji: '💎'),
+    SoundModel(id: 's91',  name: 'Coin Win',               file: 'winning_a_coin_video_game.wav',         category: 'Gaming',   emoji: '🪙'),
+    SoundModel(id: 's92',  name: 'Retro Notification',     file: 'retro_game_notification.wav',           category: 'Gaming',   emoji: '🕹️'),
+
+    // ── Animals ───────────────────────────────────────────────────────────
+    SoundModel(id: 's93',  name: 'Cricket Screech',        file: 'single_cricket_screech.wav',            category: 'Animals',  emoji: '🦗'),
+    SoundModel(id: 's94',  name: 'Lion Roar',              file: 'wild_lion_animal_roar.wav',             category: 'Animals',  emoji: '🦁'),
+    SoundModel(id: 's95',  name: 'Horse Neigh',            file: 'scared_horse_neighing.wav',             category: 'Animals',  emoji: '🐴'),
+    SoundModel(id: 's96',  name: 'Rooster Crow',           file: 'rooster_crowing_in_the_morning.wav',    category: 'Animals',  emoji: '🐓'),
+    SoundModel(id: 's97',  name: 'Cockatoo Squawk',        file: 'cockatoo_bird_squawk.wav',              category: 'Animals',  emoji: '🦜'),
+    SoundModel(id: 's98',  name: 'Fish Splash',            file: 'fish_moving_in_water.wav',              category: 'Animals',  emoji: '🐟'),
+    SoundModel(id: 's99',  name: 'Beast Roar',             file: 'aggressive_beast_roar.wav',             category: 'Animals',  emoji: '👹'),
+
+    // ── Cartoons ──────────────────────────────────────────────────────────
+    SoundModel(id: 's100', name: 'No No No',               file: 'cartoon_girl_saying_no_no_no.wav',      category: 'Cartoons', emoji: '🙅'),
+    SoundModel(id: 's101', name: 'Sad Party Horn',         file: 'cartoon_sad_party_horn.wav',            category: 'Cartoons', emoji: '🎺'),
+    SoundModel(id: 's102', name: 'Clown Horn',             file: 'clown_horn_at_circus.wav',              category: 'Cartoons', emoji: '🤡'),
+    SoundModel(id: 's103', name: 'Toy Whistle',            file: 'cartoon_toy_whistle.wav',               category: 'Cartoons', emoji: '🎵'),
+
+    // ── Reactions ─────────────────────────────────────────────────────────
+    SoundModel(id: 's104', name: 'Loud Snore',             file: 'man_strong_snore.wav',                  category: 'Reactions', emoji: '😴'),
+    SoundModel(id: 's105', name: 'Gibberish Talk',         file: 'little_boy_gibberish_talk.wav',         category: 'Reactions', emoji: '🗣️'),
+    SoundModel(id: 's106', name: 'Woman Coughing',         file: 'sick_woman_coughing.wav',               category: 'Reactions', emoji: '😷'),
+    SoundModel(id: 's107', name: 'Throat Clear',           file: 'male_clearing_the_throat.wav',          category: 'Reactions', emoji: '🤧'),
+    SoundModel(id: 's108', name: 'Man Coughing',           file: 'young_man_coughing.wav',                category: 'Reactions', emoji: '🤒'),
+    SoundModel(id: 's109', name: 'Baby Sneeze',            file: 'little_baby_sneeze.wav',                category: 'Reactions', emoji: '🤧'),
+    SoundModel(id: 's110', name: 'Crowd Applause',         file: 'small_crowd_laugh_and_applause.wav',    category: 'Reactions', emoji: '👏'),
+    SoundModel(id: 's111', name: 'Man Sneeze',             file: 'sick_man_sneeze.wav',                   category: 'Reactions', emoji: '🤧'),
+    SoundModel(id: 's112', name: 'Gasp',                   file: 'female_astonished_gasp.wav',            category: 'Reactions', emoji: '😱'),
+    SoundModel(id: 's113', name: 'Crowd Laugh',            file: 'crowd_laugh.wav',                       category: 'Reactions', emoji: '😂'),
   ]
 
   ;
