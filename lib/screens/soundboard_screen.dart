@@ -1723,14 +1723,13 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
             // ── Scrollable nav items ──────────────────────────────────────────
             Expanded(
-              child: Scrollbar(
+              child: _DrawerScrollbar(
                 controller: _drawerScrollController,
-                thumbVisibility: true,
-                trackVisibility: true,
-                thickness: 3,
-                radius: const Radius.circular(3),
+                trackColor: currentAccent.withValues(alpha: 0.10),
+                thumbColor: currentAccent.withValues(alpha: 0.55),
                 child: SingleChildScrollView(
                   controller: _drawerScrollController,
+                  padding: const EdgeInsets.only(right: 25),
                   child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2604,28 +2603,30 @@ class _DrawerItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
     final c = Theme.of(context).extension<AppColors>()!;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        decoration: BoxDecoration(
-          color: active ? accent.withValues(alpha: 0.12) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          decoration: BoxDecoration(
+            color: active ? accent.withValues(alpha: 0.12) : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(children: [
+            Icon(icon,
+                size: 20,
+                color: active ? accent : c.iconSecondary),
+            const SizedBox(width: 14),
+            Text(label,
+                style: TextStyle(
+                  color: active ? accent : c.textSecondary,
+                  fontSize: 15,
+                  fontWeight: active ? FontWeight.w600 : FontWeight.w400,
+                )),
+          ]),
         ),
-        child: Row(children: [
-          Icon(icon,
-              size: 20,
-              color: active ? accent : c.iconSecondary),
-          const SizedBox(width: 14),
-          Text(label,
-              style: TextStyle(
-                color: active ? accent : c.textSecondary,
-                fontSize: 15,
-                fontWeight: active ? FontWeight.w600 : FontWeight.w400,
-              )),
-        ]),
       ),
     );
   }
@@ -2662,6 +2663,111 @@ class _SheetOption extends StatelessWidget {
                   color: effectiveColor, fontSize: 16, fontWeight: FontWeight.w500)),
         ]),
       ),
+    );
+  }
+}
+
+// ── Custom drawer scrollbar ───────────────────────────────────────────────────
+
+class _DrawerScrollbar extends StatefulWidget {
+  final ScrollController controller;
+  final Widget child;
+  final Color trackColor;
+  final Color thumbColor;
+
+  const _DrawerScrollbar({
+    required this.controller,
+    required this.child,
+    required this.trackColor,
+    required this.thumbColor,
+  });
+
+  @override
+  State<_DrawerScrollbar> createState() => _DrawerScrollbarState();
+}
+
+class _DrawerScrollbarState extends State<_DrawerScrollbar> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onScroll);
+    super.dispose();
+  }
+
+  void _onScroll() => setState(() {});
+
+  @override
+  Widget build(BuildContext context) {
+    // Track geometry
+    const trackW = 13.0;
+    const thumbW = 6.0;
+    const hInset = (trackW - thumbW) / 2; // centres thumb horizontally in track
+    const rightPad = 8.0;  // distance from drawer right edge
+    const vMargin = 25.0;  // track top/bottom gap from viewport edges
+    const thumbPad = 4.0;  // inner padding — thumb never touches track ends
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewH = constraints.maxHeight;
+        final trackH = viewH - vMargin * 2;
+        // Travel range is inset so thumb never touches track caps
+        final travelH = trackH - thumbPad * 2;
+
+        double thumbH = travelH;
+        double thumbTop = thumbPad;
+
+        if (widget.controller.hasClients) {
+          final pos = widget.controller.position;
+          final maxScroll = pos.maxScrollExtent;
+          if (maxScroll > 0) {
+            final ratio = pos.viewportDimension / pos.extentTotal;
+            thumbH = (ratio * travelH).clamp(24.0, travelH);
+            final scrollFraction = pos.pixels / maxScroll;
+            thumbTop = thumbPad + scrollFraction * (travelH - thumbH);
+          }
+        }
+
+        return Stack(
+          children: [
+            widget.child,
+            // Track (pipe)
+            Positioned(
+              right: rightPad,
+              top: vMargin,
+              child: Container(
+                width: trackW,
+                height: trackH,
+                decoration: BoxDecoration(
+                  color: widget.trackColor,
+                  borderRadius: BorderRadius.circular(trackW / 2),
+                ),
+              ),
+            ),
+            // Thumb (inside pipe, inset from track ends)
+            Positioned(
+              right: rightPad + hInset,
+              top: vMargin + thumbTop,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 60),
+                width: thumbW,
+                height: thumbH,
+                decoration: BoxDecoration(
+                  color: widget.thumbColor,
+                  borderRadius: BorderRadius.circular(thumbW / 2),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
