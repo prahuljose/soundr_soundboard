@@ -18,6 +18,8 @@ class SoundButton extends StatefulWidget {
   // True for the button that just triggered the stop-on-tap play. Its own
   // animation should not be reset when stopOthersSignal changes.
   final bool excludeFromStopOthers;
+  /// When non-empty, matching characters in the sound name are highlighted.
+  final String highlightQuery;
 
   const SoundButton({
     super.key,
@@ -30,6 +32,7 @@ class SoundButton extends StatefulWidget {
     this.playCount = 0,
     this.stopOthersSignal = 0,
     this.excludeFromStopOthers = false,
+    this.highlightQuery = '',
   });
 
   @override
@@ -103,6 +106,46 @@ class _SoundButtonState extends State<SoundButton>
         if (mounted) setState(() => _remaining = next);
       }
     });
+  }
+
+  /// Splits the sound name into normal + highlighted spans for search queries.
+  List<TextSpan> _buildNameSpans() {
+    const baseStyle = TextStyle(
+      fontSize: 12.5,
+      fontWeight: FontWeight.w600,
+      color: Colors.white,
+      height: 1.2,
+    );
+    final q = widget.highlightQuery.trim();
+    if (q.isEmpty) return [TextSpan(text: widget.sound.name, style: baseStyle)];
+
+    final highlightStyle = baseStyle.copyWith(
+      color: _accent,
+      backgroundColor: _accent.withValues(alpha: 0.18),
+    );
+
+    final text = widget.sound.name;
+    final lower = text.toLowerCase();
+    final qLower = q.toLowerCase();
+    final spans = <TextSpan>[];
+    int start = 0;
+
+    while (true) {
+      final idx = lower.indexOf(qLower, start);
+      if (idx == -1) {
+        spans.add(TextSpan(text: text.substring(start), style: baseStyle));
+        break;
+      }
+      if (idx > start) {
+        spans.add(TextSpan(text: text.substring(start, idx), style: baseStyle));
+      }
+      spans.add(TextSpan(
+        text: text.substring(idx, idx + q.length),
+        style: highlightStyle,
+      ));
+      start = idx + q.length;
+    }
+    return spans;
   }
 
   Color get _accent {
@@ -225,15 +268,11 @@ class _SoundButtonState extends State<SoundButton>
                         ],
                       ),
                       const Spacer(),
-                      Text(
-                        widget.sound.name,
+                      RichText(
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                          height: 1.2,
+                        text: TextSpan(
+                          children: _buildNameSpans(),
                         ),
                       ),
                       const SizedBox(height: 5),
@@ -273,6 +312,8 @@ class _SoundButtonState extends State<SoundButton>
     );
   }
 }
+
+// ── Play count badge ──────────────────────────────────────────────────────────
 
 class _PlayCountBadge extends StatelessWidget {
   final int count;

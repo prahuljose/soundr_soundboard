@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
+import '../models/scene_model.dart';
 import '../models/sound_model.dart';
 
 class ClipRepository {
@@ -35,6 +36,23 @@ class ClipRepository {
         await db.execute(
           'CREATE TABLE play_counts (id TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)',
         );
+        await db.execute('''
+          CREATE TABLE scenes (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            emoji TEXT NOT NULL,
+            orderIndex INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE scene_sounds (
+            scene_id TEXT NOT NULL,
+            sound_id TEXT NOT NULL,
+            orderIndex INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (scene_id, sound_id),
+            FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+          )
+        ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -50,8 +68,26 @@ class ClipRepository {
             'CREATE TABLE IF NOT EXISTS play_counts (id TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)',
           );
         }
+        if (oldVersion < 4) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS scenes (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              emoji TEXT NOT NULL,
+              orderIndex INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS scene_sounds (
+              scene_id TEXT NOT NULL,
+              sound_id TEXT NOT NULL,
+              orderIndex INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY (scene_id, sound_id)
+            )
+          ''');
+        }
       },
-      version: 3,
+      version: 4,
     );
   }
 
@@ -158,6 +194,107 @@ class ClipRepository {
       'INSERT INTO play_counts (id, count) VALUES (?, 1) '
       'ON CONFLICT(id) DO UPDATE SET count = count + 1',
       [id],
+    );
+  }
+
+  static Future<void> resetPlayCount(String id) async {
+    final db = await _database;
+    await db.delete('play_counts', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<void> resetAllPlayCounts() async {
+    final db = await _database;
+    await db.delete('play_counts');
+  }
+
+  // ── Scenes ───────────────────────────────────────────────────────────────
+
+  static Future<List<SceneModel>> getScenes() async {
+    final db = await _database;
+    final rows = await db.query('scenes', orderBy: 'orderIndex ASC');
+    return rows
+        .map((r) => SceneModel(
+              id: r['id'] as String,
+              name: r['name'] as String,
+              emoji: r['emoji'] as String,
+              orderIndex: r['orderIndex'] as int,
+            ))
+        .toList();
+  }
+
+  static Future<SceneModel> createScene(String name, String emoji) async {
+    final db = await _database;
+    final count = Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM scenes'),
+        ) ??
+        0;
+    final id = 'scene_${DateTime.now().millisecondsSinceEpoch}';
+    await db.insert('scenes', {
+      'id': id,
+      'name': name,
+      'emoji': emoji,
+      'orderIndex': count,
+    });
+    return SceneModel(id: id, name: name, emoji: emoji, orderIndex: count);
+  }
+
+  static Future<void> updateScene(SceneModel scene) async {
+    final db = await _database;
+    await db.update(
+      'scenes',
+      {'name': scene.name, 'emoji': scene.emoji},
+      where: 'id = ?',
+      whereArgs: [scene.id],
+    );
+  }
+
+  static Future<void> deleteScene(String id) async {
+    final db = await _database;
+    await db.delete('scene_sounds', where: 'scene_id = ?', whereArgs: [id]);
+    await db.delete('scenes', where: 'id = ?', whereArgs: [id]);
+  }
+
+  static Future<Set<String>> getSceneSoundIds(String sceneId) async {
+    final db = await _database;
+    final rows = await db.query(
+      'scene_sounds',
+      where: 'scene_id = ?',
+      whereArgs: [sceneId],
+      orderBy: 'orderIndex ASC',
+    );
+    return rows.map((r) => r['sound_id'] as String).toSet();
+  }
+
+  static Future<void> addSoundToScene(String sceneId, String soundId) async {
+    final db = await _database;
+    final count = Sqflite.firstIntValue(await db.rawQuery(
+          'SELECT COUNT(*) FROM scene_sounds WHERE scene_id = ?',
+          [sceneId],
+        )) ??
+        0;
+    await db.insert(
+      'scene_sounds',
+      {'scene_id': sceneId, 'sound_id': soundId, 'orderIndex': count},
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  static Future<void> removeSoundFromScene(
+      String sceneId, String soundId) async {
+    final db = await _database;
+    await db.delete(
+      'scene_sounds',
+      where: 'scene_id = ? AND sound_id = ?',
+      whereArgs: [sceneId, soundId],
+    );
+  }
+
+  static Future<void> removeSoundFromAllScenes(String soundId) async {
+    final db = await _database;
+    await db.delete(
+      'scene_sounds',
+      where: 'sound_id = ?',
+      whereArgs: [soundId],
     );
   }
 }
