@@ -14,6 +14,7 @@ import '../models/scene_model.dart';
 import '../models/sound_model.dart';
 import '../services/clip_repository.dart';
 import '../services/notification_service.dart';
+import '../theme/app_colors.dart';
 import '../widgets/sound_button.dart';
 import 'clip_editor_screen.dart';
 import 'morse_screen.dart';
@@ -21,13 +22,15 @@ import 'morse_soundr_screen.dart';
 import 'record_screen.dart';
 
 class SoundboardScreen extends StatefulWidget {
-  const SoundboardScreen({super.key});
+  final ValueNotifier<ThemeMode> themeNotifier;
+  const SoundboardScreen({super.key, required this.themeNotifier});
 
   @override
   State<SoundboardScreen> createState() => _SoundboardScreenState();
 }
 
-class _SoundboardScreenState extends State<SoundboardScreen> {
+class _SoundboardScreenState extends State<SoundboardScreen>
+    with WidgetsBindingObserver {
   final Map<String, AudioSource> _preloaded = {};
   final Map<String, double> _durations = {};
   final List<SoundHandle> _activeHandles = [];
@@ -63,6 +66,9 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   // Scenes / boards
   List<SceneModel> _scenes = [];
   Map<String, Set<String>> _sceneSoundIds = {}; // sceneId → sound IDs in scene
+
+  // Clipboard audio detection — tracks the last URL surfaced to avoid repeating
+  String? _lastDetectedClipUrl;
 
   // Back-button guard
   DateTime? _lastBackPress;
@@ -108,7 +114,15 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _init();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _ready) {
+      _checkClipboardForAudioUrl();
+    }
   }
 
   Future<void> _init() async {
@@ -170,6 +184,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     _searchController.dispose();
     NotificationService.clearStopCallback();
     NotificationService.clearPlayCallback();
+    WidgetsBinding.instance.removeObserver(this);
     SoLoud.instance.deinit();
     super.dispose();
   }
@@ -293,7 +308,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -311,14 +325,15 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                 child: Container(
                   width: 36, height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.white24,
+                    color: Theme.of(context).extension<AppColors>()!.handleBar,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
               ),
               const SizedBox(height: 20),
-              const Text('New Board', style: TextStyle(
-                color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700,
+              Text('New Board', style: TextStyle(
+                color: Theme.of(context).extension<AppColors>()!.textPrimary,
+                fontSize: 18, fontWeight: FontWeight.w700,
               )),
               const SizedBox(height: 16),
               // Emoji picker
@@ -335,7 +350,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                       decoration: BoxDecoration(
                         color: sel
                             ? const Color(0xFF6C63FF).withValues(alpha: 0.22)
-                            : const Color(0xFF2A2A2A),
+                            : Theme.of(context).extension<AppColors>()!.surfaceElevated,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                           color: sel
@@ -353,14 +368,9 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               TextField(
                 controller: nameCtrl,
                 autofocus: true,
-                style: const TextStyle(color: Colors.white),
                 cursorColor: const Color(0xFF6C63FF),
                 decoration: const InputDecoration(
                   hintText: 'Board name…',
-                  hintStyle: TextStyle(color: Colors.white38),
-                  enabledBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24),
-                  ),
                   focusedBorder: UnderlineInputBorder(
                     borderSide: BorderSide(color: Color(0xFF6C63FF)),
                   ),
@@ -406,7 +416,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   void _showSceneOptions(SceneModel scene) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -427,13 +436,14 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               child: Row(children: [
                 Text(scene.emoji, style: const TextStyle(fontSize: 28)),
                 const SizedBox(width: 12),
-                Text(scene.name, style: const TextStyle(
-                    color: Colors.white, fontSize: 17,
+                Text(scene.name, style: TextStyle(
+                    color: Theme.of(context).extension<AppColors>()!.textPrimary,
+                    fontSize: 17,
                     fontWeight: FontWeight.w600)),
               ]),
             ),
             const SizedBox(height: 16),
-            const Divider(color: Colors.white12, height: 1),
+            Divider(color: Theme.of(context).extension<AppColors>()!.border, height: 1),
             _SheetOption(
               icon: Icons.edit_rounded,
               label: 'Rename board',
@@ -458,7 +468,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -479,8 +488,9 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                 ),
               )),
               const SizedBox(height: 20),
-              const Text('Rename Board', style: TextStyle(
-                color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700,
+              Text('Rename Board', style: TextStyle(
+                color: Theme.of(context).extension<AppColors>()!.textPrimary,
+                fontSize: 18, fontWeight: FontWeight.w700,
               )),
               const SizedBox(height: 16),
               Wrap(
@@ -496,7 +506,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                       decoration: BoxDecoration(
                         color: sel
                             ? const Color(0xFF6C63FF).withValues(alpha: 0.22)
-                            : const Color(0xFF2A2A2A),
+                            : Theme.of(context).extension<AppColors>()!.surfaceElevated,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                           color: sel
@@ -514,14 +524,9 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               TextField(
                 controller: nameCtrl,
                 autofocus: true,
-                style: const TextStyle(color: Colors.white),
                 cursorColor: const Color(0xFF6C63FF),
                 decoration: const InputDecoration(
                   hintText: 'Board name…',
-                  hintStyle: TextStyle(color: Colors.white38),
-                  enabledBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Colors.white24),
-                  ),
                   focusedBorder: UnderlineInputBorder(
                     borderSide: BorderSide(color: Color(0xFF6C63FF)),
                   ),
@@ -566,19 +571,15 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Delete board?',
-            style: TextStyle(color: Colors.white)),
+        title: const Text('Delete board?'),
         content: Text(
           'This removes the board "${scene.name}" but won\'t delete the sounds.',
-          style: const TextStyle(color: Colors.white60),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.white54)),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -608,7 +609,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     }
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -632,14 +632,15 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                   const Icon(Icons.dashboard_customize_rounded,
                       color: Color(0xFF6C63FF), size: 20),
                   const SizedBox(width: 10),
-                  const Text('Manage Boards', style: TextStyle(
-                    color: Colors.white, fontSize: 16,
+                  Builder(builder: (ctx) => Text('Manage Boards', style: TextStyle(
+                    color: Theme.of(ctx).extension<AppColors>()!.textPrimary,
+                    fontSize: 16,
                     fontWeight: FontWeight.w700,
-                  )),
+                  ))),
                 ]),
               ),
               const SizedBox(height: 8),
-              const Divider(color: Colors.white12, height: 1),
+              Divider(color: Theme.of(context).extension<AppColors>()!.border, height: 1),
               ..._scenes.map((scene) {
                 final inScene =
                     _sceneSoundIds[scene.id]?.contains(sound.id) ?? false;
@@ -669,10 +670,11 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                           style: const TextStyle(fontSize: 22)),
                       const SizedBox(width: 14),
                       Expanded(
-                        child: Text(scene.name, style: const TextStyle(
-                          color: Colors.white, fontSize: 15,
+                        child: Builder(builder: (ctx) => Text(scene.name, style: TextStyle(
+                          color: Theme.of(ctx).extension<AppColors>()!.textPrimary,
+                          fontSize: 15,
                           fontWeight: FontWeight.w500,
-                        )),
+                        ))),
                       ),
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 180),
@@ -699,12 +701,53 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     );
   }
 
+  // ── Clipboard audio detection (#70) ──────────────────────────────────────
+
+  static const _audioExts = {'mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'};
+
+  /// Infer a file extension from a Content-Type header value.
+  static String? _extFromContentType(String ct) {
+    if (ct.contains('mpeg') || ct.contains('mp3'))  return 'mp3';
+    if (ct.contains('wav'))                          return 'wav';
+    if (ct.contains('ogg'))                          return 'ogg';
+    if (ct.contains('flac'))                         return 'flac';
+    if (ct.contains('aac') || ct.contains('mp4'))    return 'aac';
+    return null;
+  }
+
+  Future<void> _checkClipboardForAudioUrl() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text?.trim() ?? '';
+    if (text.isEmpty || text == _lastDetectedClipUrl) return;
+
+    final uri = Uri.tryParse(text);
+    if (uri == null || !uri.hasScheme) return;
+
+    final ext = uri.path.split('.').last.split('?').first.toLowerCase();
+    if (!_audioExts.contains(ext)) return;
+
+    _lastDetectedClipUrl = text;
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Audio URL detected — Import?'),
+        margin: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
+        duration: const Duration(seconds: 7),
+        action: SnackBarAction(
+          label: 'Import',
+          textColor: const Color(0xFF6C63FF),
+          onPressed: () => _importFromUrl(prefillUrl: text),
+        ),
+      ),
+    );
+  }
+
   // ── URL Import (#14) ─────────────────────────────────────────────────────
 
   void _showImportOptions() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -724,14 +767,15 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               padding: EdgeInsets.symmetric(horizontal: 20),
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text('Import Sound', style: TextStyle(
-                  color: Colors.white, fontSize: 17,
+                child: Builder(builder: (ctx) => Text('Import Sound', style: TextStyle(
+                  color: Theme.of(ctx).extension<AppColors>()!.textPrimary,
+                  fontSize: 17,
                   fontWeight: FontWeight.w700,
-                )),
+                ))),
               ),
             ),
             const SizedBox(height: 8),
-            const Divider(color: Colors.white12, height: 1),
+            Divider(color: Theme.of(context).extension<AppColors>()!.border, height: 1),
             _SheetOption(
               icon: Icons.folder_open_rounded,
               label: 'From file',
@@ -749,38 +793,39 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     );
   }
 
-  Future<void> _importFromUrl() async {
-    final urlCtrl = TextEditingController();
+  Future<void> _importFromUrl({String? prefillUrl}) async {
+    final urlCtrl = TextEditingController(text: prefillUrl ?? '');
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Import from URL',
-            style: TextStyle(color: Colors.white)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text('Import from URL'),
         content: TextField(
           controller: urlCtrl,
-          autofocus: true,
+          autofocus: prefillUrl == null,
           keyboardType: TextInputType.url,
-          style: const TextStyle(color: Colors.white, fontSize: 14),
           cursorColor: const Color(0xFF6C63FF),
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             hintText: 'https://example.com/sound.mp3',
-            hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
-            enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: Colors.white24),
-            ),
-            focusedBorder: UnderlineInputBorder(
+            focusedBorder: const UnderlineInputBorder(
               borderSide: BorderSide(color: Color(0xFF6C63FF)),
+            ),
+            suffixIcon: IconButton(
+              icon: const Icon(Icons.content_paste_rounded, size: 18),
+              tooltip: 'Paste',
+              onPressed: () async {
+                final data =
+                    await Clipboard.getData(Clipboard.kTextPlain);
+                if (data?.text != null) urlCtrl.text = data!.text!.trim();
+              },
             ),
           ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
-                style: TextStyle(color: Colors.white54)),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -797,74 +842,107 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     final url = urlCtrl.text.trim();
     if (url.isEmpty) return;
 
-    // Validate URL
+    // Basic URL validation
     final uri = Uri.tryParse(url);
-    if (uri == null || !uri.hasScheme) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Invalid URL'),
-          backgroundColor: Color(0xFF2A2A2A),
-          behavior: SnackBarBehavior.floating,
-        ));
-      }
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+      _showUrlError('Invalid URL — make sure it starts with https://');
       return;
     }
 
-    // Show loading dialog
+    // Show loading
     if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const AlertDialog(
-        backgroundColor: Color(0xFF1A1A1A),
         content: Row(children: [
           CircularProgressIndicator(color: Color(0xFF6C63FF)),
           SizedBox(width: 20),
-          Text('Downloading…', style: TextStyle(color: Colors.white)),
+          Text('Downloading…'),
         ]),
       ),
     );
 
     String? filePath;
+    String? errorMessage;
+
     try {
-      final request = await HttpClient().getUrl(uri);
+      final client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 15);
+      final request  = await client.getUrl(uri);
       final response = await request.close();
-      if (response.statusCode == 200) {
-        final bytes = await consolidateHttpClientResponseBytes(response);
-        final ext = uri.path.split('.').last.split('?').first.toLowerCase();
-        final dir = await getTemporaryDirectory();
-        final name =
-            'soundr_${DateTime.now().millisecondsSinceEpoch}.$ext';
-        final file = File('${dir.path}/$name');
-        await file.writeAsBytes(bytes);
-        filePath = file.path;
+
+      if (response.statusCode != 200) {
+        errorMessage = 'Server returned ${response.statusCode} — '
+            '${response.statusCode == 404 ? 'file not found' : 'try another URL'}';
+      } else {
+        final contentType =
+            response.headers.value(HttpHeaders.contentTypeHeader) ?? '';
+        final isAudioCt = contentType.startsWith('audio/') ||
+            contentType.contains('octet-stream');
+
+        // Infer extension from URL path, fall back to Content-Type
+        String ext = uri.path.split('.').last.split('?').first.toLowerCase();
+        if (!_audioExts.contains(ext)) {
+          ext = _extFromContentType(contentType) ?? ext;
+        }
+
+        if (!isAudioCt && !_audioExts.contains(ext)) {
+          errorMessage =
+              'URL does not appear to be an audio file (got: $contentType)';
+        } else {
+          final bytes = await consolidateHttpClientResponseBytes(response);
+          final dir   = await getTemporaryDirectory();
+          final name  = 'soundr_${DateTime.now().millisecondsSinceEpoch}'
+              '.${_audioExts.contains(ext) ? ext : 'mp3'}';
+          final file  = File('${dir.path}/$name');
+          await file.writeAsBytes(bytes);
+          filePath = file.path;
+        }
       }
-    } catch (_) {}
+    } on SocketException {
+      errorMessage = 'No internet connection';
+    } on HttpException {
+      errorMessage = 'Could not reach the server — check the URL';
+    } on TimeoutException {
+      errorMessage = 'Connection timed out — try again';
+    } catch (_) {
+      errorMessage = 'Download failed — check the URL and try again';
+    }
 
     if (!mounted) return;
     Navigator.pop(context); // dismiss loading
 
+    if (errorMessage != null) {
+      _showUrlError(errorMessage);
+      return;
+    }
+
     if (filePath == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Download failed — check the URL and try again'),
-        backgroundColor: Color(0xFF2A2A2A),
-        behavior: SnackBarBehavior.floating,
-      ));
+      _showUrlError('Download failed — check the URL and try again');
       return;
     }
 
     final navigator = Navigator.of(context);
-    final saved = await navigator
-        .push<bool>(MaterialPageRoute(
-          builder: (_) => ClipEditorScreen(filePath: filePath!),
-        ));
+    final saved = await navigator.push<bool>(
+      MaterialPageRoute(builder: (_) => ClipEditorScreen(filePath: filePath!)),
+    );
     if (saved != true || !mounted) return;
 
-    final updated = await ClipRepository.getAll();
-    final newClips =
-        updated.where((c) => !_preloaded.containsKey(c.id)).toList();
+    final updated  = await ClipRepository.getAll();
+    final newClips = updated.where((c) => !_preloaded.containsKey(c.id)).toList();
     await _preloadAll(newClips);
     setState(() => _userClips = updated);
+  }
+
+  void _showUrlError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        margin: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
+      ),
+    );
   }
 
   // ── Stats ─────────────────────────────────────────────────────────────────
@@ -894,7 +972,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -924,14 +1001,14 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                     const Icon(Icons.bar_chart_rounded,
                         color: Color(0xFF6C63FF), size: 22),
                     const SizedBox(width: 10),
-                    const Text(
+                    Builder(builder: (ctx) => Text(
                       'Play Stats',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: Theme.of(ctx).extension<AppColors>()!.textPrimary,
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
                       ),
-                    ),
+                    )),
                     const Spacer(),
                     if (totalPlays > 0)
                       GestureDetector(
@@ -940,20 +1017,14 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                           final confirmed = await showDialog<bool>(
                             context: context,
                             builder: (d) => AlertDialog(
-                              backgroundColor: const Color(0xFF1A1A1A),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(18)),
-                              title: const Text('Clear all stats?',
-                                  style: TextStyle(color: Colors.white)),
+                              title: const Text('Clear all stats?'),
                               content: const Text(
                                 'This will reset play counts for every sound.',
-                                style: TextStyle(color: Colors.white60),
                               ),
                               actions: [
                                 TextButton(
                                   onPressed: () => Navigator.pop(d, false),
-                                  child: const Text('Cancel',
-                                      style: TextStyle(color: Colors.white54)),
+                                  child: const Text('Cancel'),
                                 ),
                                 TextButton(
                                   onPressed: () => Navigator.pop(d, true),
@@ -1001,15 +1072,15 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
                 if (top5.isNotEmpty) ...[
                   const SizedBox(height: 24),
-                  const Text(
+                  Builder(builder: (ctx) => Text(
                     'TOP SOUNDS',
                     style: TextStyle(
-                      color: Colors.white24,
+                      color: Theme.of(ctx).extension<AppColors>()!.textMuted,
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
                       letterSpacing: 1.2,
                     ),
-                  ),
+                  )),
                   const SizedBox(height: 10),
                   ...top5.asMap().entries.map((e) {
                     final rank = e.key + 1;
@@ -1018,67 +1089,70 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                     final maxCount = _playCounts[top5.first.id] ?? 1;
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: Row(
-                        children: [
-                          SizedBox(
-                            width: 18,
-                            child: Text(
-                              '$rank',
-                              style: TextStyle(
-                                color: rank == 1
-                                    ? Colors.amber
-                                    : Colors.white.withValues(alpha: 0.25),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
+                      child: Builder(builder: (bCtx) {
+                        final sc = Theme.of(bCtx).extension<AppColors>()!;
+                        return Row(
+                          children: [
+                            SizedBox(
+                              width: 18,
+                              child: Text(
+                                '$rank',
+                                style: TextStyle(
+                                  color: rank == 1
+                                      ? Colors.amber
+                                      : sc.textMuted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(s.emoji,
-                              style: const TextStyle(fontSize: 18)),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  s.name,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500,
+                            const SizedBox(width: 8),
+                            Text(s.emoji,
+                                style: const TextStyle(fontSize: 18)),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    s.name,
+                                    style: TextStyle(
+                                      color: sc.textPrimary,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                const SizedBox(height: 4),
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(4),
-                                  child: LinearProgressIndicator(
-                                    value: count / maxCount,
-                                    backgroundColor:
-                                        Colors.white.withValues(alpha: 0.07),
-                                    valueColor:
-                                        const AlwaysStoppedAnimation(
-                                            Color(0xFF6C63FF)),
-                                    minHeight: 4,
+                                  const SizedBox(height: 4),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: count / maxCount,
+                                      backgroundColor:
+                                          sc.textPrimary.withValues(alpha: 0.07),
+                                      valueColor:
+                                          const AlwaysStoppedAnimation(
+                                              Color(0xFF6C63FF)),
+                                      minHeight: 4,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            count >= 1000
-                                ? '${(count / 1000).toStringAsFixed(1)}k'
-                                : '$count',
-                            style: const TextStyle(
-                              color: Colors.white54,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                            const SizedBox(width: 12),
+                            Text(
+                              count >= 1000
+                                  ? '${(count / 1000).toStringAsFixed(1)}k'
+                                  : '$count',
+                              style: TextStyle(
+                                color: sc.textSecondary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
+                          ],
+                        );
+                      }),
                     );
                   }),
                 ] else ...[
@@ -1086,15 +1160,16 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                   Center(
                     child: Column(
                       children: [
-                        Icon(Icons.bar_chart_rounded,
+                        Builder(builder: (ctx) => Icon(Icons.bar_chart_rounded,
                             size: 40,
-                            color: Colors.white.withValues(alpha: 0.10)),
+                            color: Theme.of(ctx).extension<AppColors>()!.textPrimary.withValues(alpha: 0.10))),
                         const SizedBox(height: 12),
-                        const Text(
+                        Builder(builder: (ctx) => Text(
                           'No plays recorded yet',
                           style: TextStyle(
-                              color: Colors.white38, fontSize: 14),
-                        ),
+                              color: Theme.of(ctx).extension<AppColors>()!.iconSecondary,
+                              fontSize: 14),
+                        )),
                       ],
                     ),
                   ),
@@ -1193,35 +1268,40 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   // ── Clip management ───────────────────────────────────────────────────────
 
   /// Shared header used by both option sheets.
-  Widget _buildSheetHeader(SoundModel sound) => Column(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      const SizedBox(height: 8),
-      Container(
-        width: 36, height: 4,
-        decoration: BoxDecoration(
-          color: Colors.white24,
-          borderRadius: BorderRadius.circular(2),
-        ),
-      ),
-      const SizedBox(height: 16),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Row(children: [
-          Text(sound.emoji, style: const TextStyle(fontSize: 28)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(sound.name,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600)),
+  Widget _buildSheetHeader(SoundModel sound) => Builder(
+    builder: (ctx) {
+      final c = Theme.of(ctx).extension<AppColors>()!;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 8),
+          Container(
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+              color: c.handleBar,
+              borderRadius: BorderRadius.circular(2),
+            ),
           ),
-        ]),
-      ),
-      const SizedBox(height: 16),
-      const Divider(color: Colors.white12, height: 1),
-    ],
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(children: [
+              Text(sound.emoji, style: const TextStyle(fontSize: 28)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(sound.name,
+                    style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ]),
+          ),
+          const SizedBox(height: 16),
+          Divider(color: c.border, height: 1),
+        ],
+      );
+    },
   );
 
   /// Options sheet for built-in sounds (favorite + boards + reset plays).
@@ -1230,7 +1310,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     final hasPlays = (_playCounts[sound.id] ?? 0) > 0;
     await showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -1242,7 +1321,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
             _SheetOption(
               icon: isFav ? Icons.star_rounded : Icons.star_outline_rounded,
               label: isFav ? 'Remove from favorites' : 'Add to favorites',
-              color: isFav ? Colors.amber : Colors.white,
+              color: isFav ? Colors.amber : null,
               onTap: () { Navigator.pop(ctx); _toggleFavorite(sound); },
             ),
             _SheetOption(
@@ -1254,7 +1333,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               _SheetOption(
                 icon: Icons.refresh_rounded,
                 label: 'Reset play count',
-                color: Colors.white54,
                 onTap: () { Navigator.pop(ctx); _resetPlayCount(sound); },
               ),
             const SizedBox(height: 8),
@@ -1270,7 +1348,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     final hasPlays = (_playCounts[clip.id] ?? 0) > 0;
     await showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -1282,7 +1359,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
             _SheetOption(
               icon: isFav ? Icons.star_rounded : Icons.star_outline_rounded,
               label: isFav ? 'Remove from favorites' : 'Add to favorites',
-              color: isFav ? Colors.amber : Colors.white,
+              color: isFav ? Colors.amber : null,
               onTap: () { Navigator.pop(ctx); _toggleFavorite(clip); },
             ),
             _SheetOption(
@@ -1294,7 +1371,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               _SheetOption(
                 icon: Icons.refresh_rounded,
                 label: 'Reset play count',
-                color: Colors.white54,
                 onTap: () { Navigator.pop(ctx); _resetPlayCount(clip); },
               ),
             _SheetOption(
@@ -1356,15 +1432,13 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text('Delete clip?', style: TextStyle(color: Colors.white)),
-        content: Text('This will permanently delete "${clip.name}".',
-            style: const TextStyle(color: Colors.white60)),
+        title: const Text('Delete clip?'),
+        content: Text('This will permanently delete "${clip.name}".'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -1415,7 +1489,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   Future<void> _showColorPicker(SoundModel clip) async {
     await showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -1430,20 +1503,20 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                 child: Container(
                   width: 36, height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.white24,
+                    color: Theme.of(context).extension<AppColors>()!.handleBar,
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
               ),
               const SizedBox(height: 16),
-              const Text(
+              Builder(builder: (ctx) => Text(
                 'Button Color',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: Theme.of(ctx).extension<AppColors>()!.textPrimary,
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
                 ),
-              ),
+              )),
               const SizedBox(height: 16),
               Wrap(
                 spacing: 12,
@@ -1455,22 +1528,25 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                       Navigator.pop(ctx);
                       await _setClipColor(clip, null);
                     },
-                    child: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2A2A),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: clip.customColor == null
-                              ? Colors.white60
-                              : Colors.white24,
-                          width: clip.customColor == null ? 2 : 1,
+                    child: Builder(builder: (ctx) {
+                      final sc = Theme.of(ctx).extension<AppColors>()!;
+                      return Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: sc.surfaceElevated,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: clip.customColor == null
+                                ? sc.textSecondary
+                                : sc.border,
+                            width: clip.customColor == null ? 2 : 1,
+                          ),
                         ),
-                      ),
-                      child: const Icon(Icons.format_color_reset_rounded,
-                          color: Colors.white38, size: 18),
-                    ),
+                        child: Icon(Icons.format_color_reset_rounded,
+                            color: sc.iconSecondary, size: 18),
+                      );
+                    }),
                   ),
                   ..._colorSwatches.map((color) {
                     final selected = clip.customColor == color.toARGB32();
@@ -1534,6 +1610,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -1544,15 +1621,8 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           _lastBackPress = now;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text(
-                'Press back again to exit',
-                style: TextStyle(color: Colors.white),
-              ),
+              content: const Text('Press back again to exit'),
               duration: const Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: const Color(0xFF2A2A2A),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
               margin: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
             ),
           );
@@ -1561,8 +1631,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
         }
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFF0E0E0E),
-        drawer: _ready ? _buildDrawer() : null,
+        drawer: _ready ? _buildDrawer(c) : null,
         appBar: _buildAppBar(),
         body: _ready
             ? Stack(
@@ -1580,9 +1649,9 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     );
   }
 
-  Widget _buildDrawer() {
+  Widget _buildDrawer(AppColors c) {
     return Drawer(
-      backgroundColor: const Color(0xFF141414),
+      backgroundColor: c.drawerBg,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1604,24 +1673,24 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-                const Column(
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Soundr', style: TextStyle(
-                      color: Colors.white,
+                      color: c.textPrimary,
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
                       letterSpacing: -0.5,
                     )),
                     Text('Your personal soundboard', style: TextStyle(
-                      color: Colors.white38,
+                      color: c.iconSecondary,
                       fontSize: 11,
                     )),
                   ],
                 ),
               ]),
             ),
-            const Divider(color: Colors.white10, height: 1),
+            Divider(color: c.borderSubtle, height: 1),
             const SizedBox(height: 8),
 
             // ── Nav items ────────────────────────────────────────────────────
@@ -1665,13 +1734,13 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
             ),
 
             const Spacer(),
-            const Divider(color: Colors.white10, height: 1),
+            Divider(color: c.borderSubtle, height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
               child: Text(
                 'Soundr v1.0',
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.15),
+                  color: c.textPrimary.withValues(alpha: 0.15),
                   fontSize: 11,
                 ),
               ),
@@ -1688,30 +1757,28 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
       );
 
   PreferredSizeWidget _buildAppBar() {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final isDark = widget.themeNotifier.value == ThemeMode.dark;
     return AppBar(
-      backgroundColor: const Color(0xFF0E0E0E),
-      surfaceTintColor: Colors.transparent,
-      scrolledUnderElevation: 0,
-      elevation: 0,
       title: _isSearching
           ? TextField(
               controller: _searchController,
               autofocus: true,
-              style: const TextStyle(color: Colors.white, fontSize: 17),
+              style: TextStyle(color: c.textPrimary, fontSize: 17),
               cursorColor: const Color(0xFF6C63FF),
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 hintText: 'Search sounds...',
-                hintStyle: TextStyle(color: Colors.white38),
+                hintStyle: TextStyle(color: c.iconSecondary),
                 border: InputBorder.none,
               ),
               onChanged: (v) => setState(() => _searchQuery = v),
             )
-          : const Text(
+          : Text(
               'Soundr',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w700,
-                color: Colors.white,
+                color: c.textPrimary,
                 letterSpacing: -0.5,
               ),
             ),
@@ -1720,23 +1787,34 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           : _isSearching
               ? [
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white70),
+                    icon: Icon(Icons.close, color: c.textSecondary),
                     onPressed: _closeSearch,
                   ),
                 ]
               : [
                   IconButton(
-                    icon: const Icon(Icons.search_rounded, color: Colors.white),
+                    icon: Icon(
+                      isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+                      color: c.textSecondary,
+                    ),
+                    tooltip: isDark ? 'Light mode' : 'Dark mode',
+                    onPressed: () {
+                      widget.themeNotifier.value =
+                          isDark ? ThemeMode.light : ThemeMode.dark;
+                    },
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.search_rounded, color: c.textPrimary),
                     tooltip: 'Search',
                     onPressed: _openSearch,
                   ),
                   IconButton(
-                    icon: const Icon(Icons.bar_chart_rounded, color: Colors.white),
+                    icon: Icon(Icons.bar_chart_rounded, color: c.textPrimary),
                     tooltip: 'Stats',
                     onPressed: _showStats,
                   ),
                   IconButton(
-                    icon: const Icon(Icons.stop_circle_outlined, color: Colors.white),
+                    icon: Icon(Icons.stop_circle_outlined, color: c.textPrimary),
                     tooltip: 'Stop all',
                     onPressed: _stopAll,
                   ),
@@ -1745,6 +1823,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   }
 
   Widget _buildBody() {
+    final c = Theme.of(context).extension<AppColors>()!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1768,7 +1847,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                       height: 36,
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1A1A1A),
+                        color: c.surfaceCard,
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
                           color: const Color(0xFF6C63FF).withValues(alpha: 0.35),
@@ -1838,9 +1917,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w500,
-                              color: active
-                                  ? Colors.white
-                                  : Colors.white70,
+                              color: active ? Colors.white : c.textSecondary,
                             ),
                           ),
                           if (soundCount > 0) ...[
@@ -1852,7 +1929,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                                 fontWeight: FontWeight.w600,
                                 color: active
                                     ? Colors.white.withValues(alpha: 0.6)
-                                    : Colors.white.withValues(alpha: 0.25),
+                                    : c.textMuted,
                               ),
                             ),
                           ],
@@ -1865,7 +1942,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                 // ── Standard category chip ────────────────────────────
                 final active = cat == _selectedCategory;
                 final accent = _categoryAccent(cat);
-                // Count badge (skip 'All')
                 final int? count = switch (cat) {
                   'All'       => null,
                   'Favorites' => _favorites.length,
@@ -1879,15 +1955,10 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                     duration: const Duration(milliseconds: 150),
                     padding: const EdgeInsets.symmetric(horizontal: 14),
                     decoration: BoxDecoration(
-                      // Active chip uses the category's accent color (#9)
-                      color: active
-                          ? accent
-                          : const Color(0xFF1A1A1A),
+                      color: active ? accent : c.surfaceCard,
                       borderRadius: BorderRadius.circular(18),
                       border: Border.all(
-                        color: active
-                            ? accent
-                            : Colors.white12,
+                        color: active ? accent : c.border,
                       ),
                     ),
                     alignment: Alignment.center,
@@ -1899,7 +1970,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
-                            color: active ? Colors.black : Colors.white54,
+                            color: active ? Colors.black : c.textSecondary,
                           ),
                         ),
                         if (count != null) ...[
@@ -1911,7 +1982,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                               fontWeight: FontWeight.w600,
                               color: active
                                   ? Colors.black.withValues(alpha: 0.4)
-                                  : Colors.white.withValues(alpha: 0.22),
+                                  : c.textMuted,
                             ),
                           ),
                         ],
@@ -1994,30 +2065,30 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   }
 
   Widget _buildEmptyState() {
+    final c = Theme.of(context).extension<AppColors>()!;
+
     // Search with no matches
     if (_isSearching && _searchQuery.isNotEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.search_off_rounded,
-                size: 48, color: Colors.white.withValues(alpha: 0.12)),
-            const SizedBox(height: 16),
-            Text(
-              'No results for "$_searchQuery"',
-              style: const TextStyle(
-                color: Colors.white38,
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-              ),
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.search_off_rounded,
+              size: 48, color: c.textPrimary.withValues(alpha: 0.12)),
+          const SizedBox(height: 16),
+          Text(
+            'No results for "$_searchQuery"',
+            style: TextStyle(
+              color: c.iconSecondary,
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
             ),
-            const SizedBox(height: 6),
-            const Text(
-              'Try a different name or category',
-              style: TextStyle(color: Colors.white24, fontSize: 12),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Try a different name or category',
+            style: TextStyle(color: c.textMuted, fontSize: 12),
+          ),
+        ],
       );
     }
 
@@ -2034,19 +2105,19 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
             Text(scene.emoji,
                 style: TextStyle(
                     fontSize: 48,
-                    color: Colors.white.withValues(alpha: 0.15))),
+                    color: c.textPrimary.withValues(alpha: 0.15))),
             const SizedBox(height: 16),
             Text(
               '"${scene.name}" is empty',
-              style: const TextStyle(
-                  color: Colors.white54,
+              style: TextStyle(
+                  color: c.textSecondary,
                   fontSize: 16,
                   fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Long-press any sound → Manage boards',
-              style: TextStyle(color: Colors.white30, fontSize: 13),
+              style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
         ),
@@ -2062,18 +2133,18 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
             Icon(Icons.star_outline_rounded,
                 size: 52, color: Colors.amber.withValues(alpha: 0.25)),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'No favorites yet',
               style: TextStyle(
-                color: Colors.white54,
+                color: c.textSecondary,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Tap ★ on any sound to save it here',
-              style: TextStyle(color: Colors.white30, fontSize: 13),
+              style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
         ),
@@ -2087,20 +2158,20 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.mic_none_rounded,
-                size: 52, color: Colors.white.withValues(alpha: 0.12)),
+                size: 52, color: c.textPrimary.withValues(alpha: 0.12)),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'No clips yet',
               style: TextStyle(
-                color: Colors.white54,
+                color: c.textSecondary,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Tap 🎤 to record or 📂 to import a sound',
-              style: TextStyle(color: Colors.white30, fontSize: 13),
+              style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
         ),
@@ -2108,12 +2179,13 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     }
 
     // Fallback
-    return const Center(
-      child: Text('No sounds', style: TextStyle(color: Colors.white38, fontSize: 15)),
+    return Center(
+      child: Text('No sounds', style: TextStyle(color: c.iconSecondary, fontSize: 15)),
     );
   }
 
   Widget _buildRecentlyPlayed() {
+    final c = Theme.of(context).extension<AppColors>()!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2122,7 +2194,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           child: Text(
             'RECENTLY PLAYED',
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.22),
+              color: c.textMuted,
               fontSize: 10,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
@@ -2147,9 +2219,9 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1A1A1A),
+                    color: c.surfaceCard,
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                    border: Border.all(color: c.textPrimary.withValues(alpha: 0.08)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -2159,8 +2231,8 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                       const SizedBox(width: 6),
                       Text(
                         sound.name,
-                        style: const TextStyle(
-                          color: Colors.white60,
+                        style: TextStyle(
+                          color: c.textSecondary,
                           fontSize: 12.5,
                           fontWeight: FontWeight.w500,
                         ),
@@ -2178,70 +2250,68 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   }
 
   Widget _buildFabs() {
+    final c = Theme.of(context).extension<AppColors>()!;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         // Stop-on-tap FAB
-        _buildStopOnTapFab(),
+        _buildStopOnTapFab(c),
         const SizedBox(height: 10),
         // Randomize
         FloatingActionButton(
           heroTag: 'random',
           onPressed: _playRandom,
-          backgroundColor: const Color(0xFF1A1A1A),
+          backgroundColor: c.surfaceCard,
           elevation: 0,
           shape: CircleBorder(
-            side: BorderSide(color: Colors.white.withAlpha(30), width: 1),
+            side: BorderSide(color: c.textPrimary.withAlpha(30), width: 1),
           ),
-          child: const Icon(Icons.casino_rounded, color: Colors.white60, size: 22),
+          child: Icon(Icons.casino_rounded, color: c.textSecondary, size: 22),
         ),
         const SizedBox(height: 10),
         // Import audio (file or URL)
         FloatingActionButton(
           heroTag: 'import',
           onPressed: _showImportOptions,
-          backgroundColor: const Color(0xFF1A1A1A),
+          backgroundColor: c.surfaceCard,
           elevation: 0,
           shape: CircleBorder(
-            side: BorderSide(color: Colors.white.withAlpha(30), width: 1),
+            side: BorderSide(color: c.textPrimary.withAlpha(30), width: 1),
           ),
-          child: const Icon(Icons.file_open_rounded, color: Colors.white60, size: 22),
+          child: Icon(Icons.file_open_rounded, color: c.textSecondary, size: 22),
         ),
         const SizedBox(height: 10),
         // Record
         FloatingActionButton(
           heroTag: 'record',
           onPressed: _openRecorder,
-          backgroundColor: const Color(0xFF1C1C1C),
+          backgroundColor: c.surfaceCard,
           shape: CircleBorder(
-            side: BorderSide(color: Colors.white.withAlpha(40), width: 1),
+            side: BorderSide(color: c.textPrimary.withAlpha(40), width: 1),
           ),
           elevation: 0,
-          child: const Icon(Icons.mic_rounded, color: Colors.white, size: 24),
+          child: Icon(Icons.mic_rounded, color: c.textPrimary, size: 24),
         ),
       ],
     );
   }
 
-  Widget _buildStopOnTapFab() {
+  Widget _buildStopOnTapFab(AppColors c) {
     final isActive = _stopOnTap;
     final isExpanded = _stopOnTap && _stopOnTapExpanded;
+    const accent = Color(0xFF6C63FF);
 
-    // AnimatedSize lets the container width follow its content exactly —
-    // no hardcoded pill width, so there's never blank trailing space.
-    // AnimatedAlign(widthFactor) slides the label in/out; AnimatedSize
-    // tracks the resulting Row width and animates the outer bounds.
     return AnimatedSize(
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
       child: Container(
         height: 56,
         decoration: BoxDecoration(
-          color: isActive ? Colors.white : const Color(0xFF1A1A1A),
+          color: isActive ? accent : c.surfaceCard,
           borderRadius: BorderRadius.circular(28),
           border: Border.all(
-            color: isActive ? Colors.white : Colors.white.withAlpha(30),
+            color: isActive ? accent : c.textPrimary.withAlpha(30),
             width: 1,
           ),
         ),
@@ -2250,7 +2320,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           color: Colors.transparent,
           child: InkWell(
             onTap: _toggleStopOnTap,
-            splashColor: isActive ? Colors.black12 : Colors.white10,
+            splashColor: isActive ? Colors.white24 : Colors.black12,
             highlightColor: Colors.transparent,
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -2261,7 +2331,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                   child: Center(
                     child: Icon(
                       Icons.touch_app_rounded,
-                      color: isActive ? const Color(0xFF0E0E0E) : Colors.white38,
+                      color: isActive ? Colors.white : c.iconSecondary,
                       size: 22,
                     ),
                   ),
@@ -2280,7 +2350,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                         child: const Text(
                           'Stop-on-tap',
                           style: TextStyle(
-                            color: Color(0xFF0E0E0E),
+                            color: Colors.white,
                             fontWeight: FontWeight.w700,
                             fontSize: 14,
                           ),
@@ -2335,6 +2405,7 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -2353,8 +2424,8 @@ class _StatCard extends StatelessWidget {
                 children: [
                   Text(
                     value,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: c.textPrimary,
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
                     ),
@@ -2364,7 +2435,7 @@ class _StatCard extends StatelessWidget {
                   Text(
                     label,
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.35),
+                      color: c.textMuted,
                       fontSize: 11,
                       fontWeight: FontWeight.w500,
                     ),
@@ -2397,6 +2468,7 @@ class _DrawerItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const accent = Color(0xFF6C63FF);
+    final c = Theme.of(context).extension<AppColors>()!;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
@@ -2410,11 +2482,11 @@ class _DrawerItem extends StatelessWidget {
         child: Row(children: [
           Icon(icon,
               size: 20,
-              color: active ? accent : Colors.white38),
+              color: active ? accent : c.iconSecondary),
           const SizedBox(width: 14),
           Text(label,
               style: TextStyle(
-                color: active ? accent : Colors.white60,
+                color: active ? accent : c.textSecondary,
                 fontSize: 15,
                 fontWeight: active ? FontWeight.w600 : FontWeight.w400,
               )),
@@ -2430,27 +2502,29 @@ class _SheetOption extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  final Color color;
+  final Color? color; // null → uses theme's textPrimary
 
   const _SheetOption({
     required this.icon,
     required this.label,
     required this.onTap,
-    this.color = Colors.white,
+    this.color,
   });
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor =
+        color ?? Theme.of(context).extension<AppColors>()!.textPrimary;
     return InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
         child: Row(children: [
-          Icon(icon, color: color, size: 22),
+          Icon(icon, color: effectiveColor, size: 22),
           const SizedBox(width: 16),
           Text(label,
               style: TextStyle(
-                  color: color, fontSize: 16, fontWeight: FontWeight.w500)),
+                  color: effectiveColor, fontSize: 16, fontWeight: FontWeight.w500)),
         ]),
       ),
     );
@@ -2517,7 +2591,9 @@ class _SplashScreenState extends State<_SplashScreen>
     final progress =
         widget.totalCount > 0 ? widget.loadedCount / widget.totalCount : null;
 
-    return Center(
+    return ColoredBox(
+      color: const Color(0xFF0E0E0E),
+      child: Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -2604,7 +2680,7 @@ class _SplashScreenState extends State<_SplashScreen>
           ),
         ],
       ),
-    );
+    ));
   }
 }
 

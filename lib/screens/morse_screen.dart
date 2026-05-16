@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import '../theme/app_colors.dart';
 
 class MorseScreen extends StatefulWidget {
   final AudioSource? dotSource;
@@ -139,13 +140,12 @@ class _MorseScreenState extends State<MorseScreen> {
   void _showTimingSheet() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) {
-          // Helper that updates both the sheet state and the screen state.
+          final sc = Theme.of(ctx).extension<AppColors>()!;
           void update(VoidCallback fn) {
             setSheet(fn);
             setState(fn);
@@ -170,14 +170,14 @@ class _MorseScreenState extends State<MorseScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(label, style: const TextStyle(
-                            color: Colors.white,
+                          Text(label, style: TextStyle(
+                            color: sc.textPrimary,
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           )),
                           const SizedBox(height: 2),
                           Text(sublabel, style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.35),
+                            color: sc.textMuted,
                             fontSize: 11,
                           )),
                         ],
@@ -204,8 +204,7 @@ class _MorseScreenState extends State<MorseScreen> {
                   SliderTheme(
                     data: SliderTheme.of(ctx).copyWith(
                       activeTrackColor: const Color(0xFF6C63FF),
-                      inactiveTrackColor:
-                          Colors.white.withValues(alpha: 0.08),
+                      inactiveTrackColor: sc.textPrimary.withValues(alpha: 0.08),
                       thumbColor: const Color(0xFF6C63FF),
                       overlayColor:
                           const Color(0xFF6C63FF).withValues(alpha: 0.12),
@@ -235,29 +234,26 @@ class _MorseScreenState extends State<MorseScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Handle
                   Center(
                     child: Container(
                       width: 36, height: 4,
                       decoration: BoxDecoration(
-                        color: Colors.white24,
+                        color: sc.handleBar,
                         borderRadius: BorderRadius.circular(2),
                       ),
                     ),
                   ),
                   const SizedBox(height: 20),
-                  // Title
                   Row(children: [
                     const Icon(Icons.tune_rounded,
                         color: Color(0xFF6C63FF), size: 20),
                     const SizedBox(width: 10),
-                    const Text('Timing Settings', style: TextStyle(
-                      color: Colors.white,
+                    Text('Timing Settings', style: TextStyle(
+                      color: sc.textPrimary,
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
                     )),
                     const Spacer(),
-                    // Reset to defaults
                     GestureDetector(
                       onTap: () => update(() {
                         _dotThresholdMs = 260;
@@ -265,7 +261,7 @@ class _MorseScreenState extends State<MorseScreen> {
                         _wordGapMs      = 1800;
                       }),
                       child: Text('Reset', style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.35),
+                        color: sc.textMuted,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                       )),
@@ -317,18 +313,13 @@ class _MorseScreenState extends State<MorseScreen> {
   Widget build(BuildContext context) {
     final hasContent = _decodedText.isNotEmpty || _currentMorse.isNotEmpty;
 
+    final c = Theme.of(context).extension<AppColors>()!;
     return Scaffold(
-      backgroundColor: const Color(0xFF0E0E0E),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E0E0E),
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white70),
-        title: const Text(
+        title: Text(
           'Morse Code Tapper',
           style: TextStyle(
-            color: Colors.white,
+            color: c.textPrimary,
             fontSize: 20,
             fontWeight: FontWeight.w700,
           ),
@@ -336,19 +327,16 @@ class _MorseScreenState extends State<MorseScreen> {
         actions: [
           if (hasContent) ...[
             IconButton(
-              icon: const Icon(Icons.backspace_outlined, size: 20),
-              color: Colors.white38,
+              icon: Icon(Icons.backspace_outlined, size: 20, color: c.iconSecondary),
               onPressed: _deleteLast,
             ),
             IconButton(
-              icon: const Icon(Icons.clear_rounded, size: 20),
-              color: Colors.white38,
+              icon: Icon(Icons.clear_rounded, size: 20, color: c.iconSecondary),
               onPressed: _clear,
             ),
           ],
           IconButton(
-            icon: const Icon(Icons.tune_rounded, size: 22),
-            color: Colors.white38,
+            icon: Icon(Icons.tune_rounded, size: 22, color: c.iconSecondary),
             tooltip: 'Timing settings',
             onPressed: _showTimingSheet,
           ),
@@ -374,8 +362,8 @@ class _MorseScreenState extends State<MorseScreen> {
                         key: ValueKey(_decodedText),
                         style: TextStyle(
                           color: _decodedText.isEmpty
-                              ? Colors.white.withValues(alpha: 0.08)
-                              : Colors.white,
+                              ? c.textPrimary.withValues(alpha: 0.08)
+                              : c.textPrimary,
                           fontSize: 52,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 6,
@@ -462,7 +450,7 @@ class _MorseScreenState extends State<MorseScreen> {
                               Icons.touch_app_rounded,
                               key: const ValueKey('idle'),
                               size: 36,
-                              color: Colors.white.withValues(alpha: 0.10),
+                              color: c.textPrimary.withValues(alpha: 0.10),
                             ),
                     ),
                     const SizedBox(height: 10),
@@ -473,7 +461,7 @@ class _MorseScreenState extends State<MorseScreen> {
                       style: TextStyle(
                         color: _isPressed
                             ? const Color(0xFF6C63FF).withValues(alpha: 0.65)
-                            : Colors.white.withValues(alpha: 0.18),
+                            : c.textPrimary.withValues(alpha: 0.18),
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                         letterSpacing: 0.3,
@@ -520,31 +508,34 @@ class _MorseReferenceState extends State<_MorseReference> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        GestureDetector(
-          onTap: () => setState(() => _expanded = !_expanded),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-            child: Row(children: [
-              Text(
-                'REFERENCE',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.22),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1.2,
+        Builder(builder: (ctx) {
+          final rc = Theme.of(ctx).extension<AppColors>()!;
+          return GestureDetector(
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+              child: Row(children: [
+                Text(
+                  'REFERENCE',
+                  style: TextStyle(
+                    color: rc.textMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 1.2,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              Icon(
-                _expanded
-                    ? Icons.keyboard_arrow_up_rounded
-                    : Icons.keyboard_arrow_down_rounded,
-                color: Colors.white24,
-                size: 16,
-              ),
-            ]),
-          ),
-        ),
+                const SizedBox(width: 6),
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  color: rc.textMuted,
+                  size: 16,
+                ),
+              ]),
+            ),
+          );
+        }),
         AnimatedSize(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOut,
@@ -555,34 +546,36 @@ class _MorseReferenceState extends State<_MorseReference> {
                     spacing: 6,
                     runSpacing: 6,
                     children: _entries.map((e) {
-                      return Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 9, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1A1A1A),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                              color: Colors.white.withValues(alpha: 0.07)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(e.$1,
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                )),
-                            const SizedBox(width: 7),
-                            Text(e.$2,
-                                style: const TextStyle(
-                                  color: Color(0xFF6C63FF),
-                                  fontSize: 11,
-                                  letterSpacing: 1.5,
-                                )),
-                          ],
-                        ),
-                      );
+                      return Builder(builder: (bCtx) {
+                        final rc = Theme.of(bCtx).extension<AppColors>()!;
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 9, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: rc.surfaceCard,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: rc.borderSubtle),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(e.$1,
+                                  style: TextStyle(
+                                    color: rc.textSecondary,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  )),
+                              const SizedBox(width: 7),
+                              Text(e.$2,
+                                  style: const TextStyle(
+                                    color: Color(0xFF6C63FF),
+                                    fontSize: 11,
+                                    letterSpacing: 1.5,
+                                  )),
+                            ],
+                          ),
+                        );
+                      });
                     }).toList(),
                   ),
                 )

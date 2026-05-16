@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import '../theme/app_colors.dart';
 
 class MorseSoundrScreen extends StatefulWidget {
   final AudioSource? dotSource;
@@ -180,19 +181,14 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
     final currentMorse =
         (currentChar != null && currentChar != ' ') ? _charToMorse[currentChar] : null;
 
+    final c = Theme.of(context).extension<AppColors>()!;
     return Scaffold(
-      backgroundColor: const Color(0xFF0E0E0E),
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E0E0E),
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white70),
-        title: const Text(
+        title: Text(
           'Morse Code Soundr',
           style: TextStyle(
-            color: Colors.white,
+            color: c.textPrimary,
             fontSize: 20,
             fontWeight: FontWeight.w700,
           ),
@@ -213,14 +209,11 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                   inputFormatters: [
                     FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9 ]')),
                   ],
-                  style: const TextStyle(color: Colors.white, fontSize: 16),
                   cursorColor: const Color(0xFF6C63FF),
                   decoration: InputDecoration(
                     hintText: 'Type a message…',
-                    hintStyle: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.25)),
                     filled: true,
-                    fillColor: const Color(0xFF1A1A1A),
+                    fillColor: c.surfaceCard,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
                       borderSide: BorderSide.none,
@@ -238,8 +231,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
               if (text.isNotEmpty && !_isPlaying) ...[
                 const SizedBox(width: 8),
                 IconButton(
-                  icon: const Icon(Icons.clear_rounded),
-                  color: Colors.white38,
+                  icon: Icon(Icons.clear_rounded, color: c.iconSecondary),
                   onPressed: () => _textController.clear(),
                 ),
               ],
