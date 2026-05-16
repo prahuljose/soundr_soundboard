@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui' show lerpDouble;
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,18 +20,20 @@ import '../widgets/sound_button.dart';
 import 'clip_editor_screen.dart';
 import 'morse_screen.dart';
 import 'morse_soundr_screen.dart';
+import 'morse_tapper_quiz_screen.dart';
+import 'morse_soundr_quiz_screen.dart';
 import 'record_screen.dart';
 
 class SoundboardScreen extends StatefulWidget {
   final ValueNotifier<ThemeMode> themeNotifier;
-  const SoundboardScreen({super.key, required this.themeNotifier});
+  final ValueNotifier<Color> accentNotifier;
+  const SoundboardScreen({super.key, required this.themeNotifier, required this.accentNotifier});
 
   @override
   State<SoundboardScreen> createState() => _SoundboardScreenState();
 }
 
-class _SoundboardScreenState extends State<SoundboardScreen>
-    with WidgetsBindingObserver {
+class _SoundboardScreenState extends State<SoundboardScreen> {
   final Map<String, AudioSource> _preloaded = {};
   final Map<String, double> _durations = {};
   final List<SoundHandle> _activeHandles = [];
@@ -67,11 +70,9 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   List<SceneModel> _scenes = [];
   Map<String, Set<String>> _sceneSoundIds = {}; // sceneId → sound IDs in scene
 
-  // Clipboard audio detection — tracks the last URL surfaced to avoid repeating
-  String? _lastDetectedClipUrl;
-
   // Back-button guard
   DateTime? _lastBackPress;
+  String _deviceId = '—';
 
   // ── Data ──────────────────────────────────────────────────────────────────
 
@@ -114,15 +115,20 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _init();
+    _fetchDeviceId();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _ready) {
-      _checkClipboardForAudioUrl();
-    }
+  Future<void> _fetchDeviceId() async {
+    try {
+      if (Platform.isAndroid) {
+        final info = await DeviceInfoPlugin().androidInfo;
+        if (mounted) setState(() => _deviceId = info.id);
+      } else if (Platform.isIOS) {
+        final info = await DeviceInfoPlugin().iosInfo;
+        if (mounted) setState(() => _deviceId = info.identifierForVendor ?? '—');
+      }
+    } catch (_) {}
   }
 
   Future<void> _init() async {
@@ -184,7 +190,6 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     _searchController.dispose();
     NotificationService.clearStopCallback();
     NotificationService.clearPlayCallback();
-    WidgetsBinding.instance.removeObserver(this);
     SoLoud.instance.deinit();
     super.dispose();
   }
@@ -303,6 +308,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   ];
 
   void _showCreateSceneDialog() {
+    final accent = Theme.of(context).colorScheme.primary;
     String selectedEmoji = _sceneEmojis.first;
     final nameCtrl = TextEditingController();
     showModalBottomSheet(
@@ -349,12 +355,12 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: sel
-                            ? const Color(0xFF6C63FF).withValues(alpha: 0.22)
+                            ? accent.withValues(alpha: 0.22)
                             : Theme.of(context).extension<AppColors>()!.surfaceElevated,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                           color: sel
-                              ? const Color(0xFF6C63FF)
+                              ? accent
                               : Colors.transparent,
                           width: 1.5,
                         ),
@@ -368,11 +374,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
               TextField(
                 controller: nameCtrl,
                 autofocus: true,
-                cursorColor: const Color(0xFF6C63FF),
-                decoration: const InputDecoration(
+                cursorColor: accent,
+                decoration: InputDecoration(
                   hintText: 'Board name…',
                   focusedBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF6C63FF)),
+                    borderSide: BorderSide(color: accent),
                   ),
                 ),
               ),
@@ -381,7 +387,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                 width: double.infinity,
                 child: TextButton(
                   style: TextButton.styleFrom(
-                    backgroundColor: const Color(0xFF6C63FF),
+                    backgroundColor: accent,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(vertical: 14),
@@ -463,6 +469,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   }
 
   void _showRenameSceneDialog(SceneModel scene) {
+    final accent = Theme.of(context).colorScheme.primary;
     String selectedEmoji = scene.emoji;
     final nameCtrl = TextEditingController(text: scene.name);
     showModalBottomSheet(
@@ -505,12 +512,12 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         color: sel
-                            ? const Color(0xFF6C63FF).withValues(alpha: 0.22)
+                            ? accent.withValues(alpha: 0.22)
                             : Theme.of(context).extension<AppColors>()!.surfaceElevated,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                           color: sel
-                              ? const Color(0xFF6C63FF)
+                              ? accent
                               : Colors.transparent,
                           width: 1.5,
                         ),
@@ -524,11 +531,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
               TextField(
                 controller: nameCtrl,
                 autofocus: true,
-                cursorColor: const Color(0xFF6C63FF),
-                decoration: const InputDecoration(
+                cursorColor: accent,
+                decoration: InputDecoration(
                   hintText: 'Board name…',
                   focusedBorder: UnderlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF6C63FF)),
+                    borderSide: BorderSide(color: accent),
                   ),
                 ),
               ),
@@ -537,7 +544,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                 width: double.infinity,
                 child: TextButton(
                   style: TextButton.styleFrom(
-                    backgroundColor: const Color(0xFF6C63FF),
+                    backgroundColor: accent,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.symmetric(vertical: 14),
@@ -602,6 +609,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
   /// Shows a sheet for adding/removing the sound from any board.
   void _showManageBoardsSheet(SoundModel sound) {
+    final accent = Theme.of(context).colorScheme.primary;
     if (_scenes.isEmpty) {
       // No boards yet — jump straight to create
       _showCreateSceneDialog();
@@ -621,7 +629,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
               Container(
                 width: 36, height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.white24,
+                  color: Theme.of(ctx).extension<AppColors>()!.handleBar,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
@@ -629,8 +637,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(children: [
-                  const Icon(Icons.dashboard_customize_rounded,
-                      color: Color(0xFF6C63FF), size: 20),
+                  Icon(Icons.dashboard_customize_rounded,
+                      color: accent, size: 20),
                   const SizedBox(width: 10),
                   Builder(builder: (ctx) => Text('Manage Boards', style: TextStyle(
                     color: Theme.of(ctx).extension<AppColors>()!.textPrimary,
@@ -684,8 +692,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                               : Icons.radio_button_unchecked_rounded,
                           key: ValueKey(inScene),
                           color: inScene
-                              ? const Color(0xFF6C63FF)
-                              : Colors.white24,
+                              ? accent
+                              : Theme.of(ctx).extension<AppColors>()!.iconSecondary,
                           size: 22,
                         ),
                       ),
@@ -701,8 +709,6 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     );
   }
 
-  // ── Clipboard audio detection (#70) ──────────────────────────────────────
-
   static const _audioExts = {'mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'};
 
   /// Infer a file extension from a Content-Type header value.
@@ -713,34 +719,6 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     if (ct.contains('flac'))                         return 'flac';
     if (ct.contains('aac') || ct.contains('mp4'))    return 'aac';
     return null;
-  }
-
-  Future<void> _checkClipboardForAudioUrl() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text?.trim() ?? '';
-    if (text.isEmpty || text == _lastDetectedClipUrl) return;
-
-    final uri = Uri.tryParse(text);
-    if (uri == null || !uri.hasScheme) return;
-
-    final ext = uri.path.split('.').last.split('?').first.toLowerCase();
-    if (!_audioExts.contains(ext)) return;
-
-    _lastDetectedClipUrl = text;
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Audio URL detected — Import?'),
-        margin: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
-        duration: const Duration(seconds: 7),
-        action: SnackBarAction(
-          label: 'Import',
-          textColor: const Color(0xFF6C63FF),
-          onPressed: () => _importFromUrl(prefillUrl: text),
-        ),
-      ),
-    );
   }
 
   // ── URL Import (#14) ─────────────────────────────────────────────────────
@@ -763,8 +741,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
               ),
             ),
             const SizedBox(height: 16),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Builder(builder: (ctx) => Text('Import Sound', style: TextStyle(
@@ -794,6 +772,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   }
 
   Future<void> _importFromUrl({String? prefillUrl}) async {
+    final accent = Theme.of(context).colorScheme.primary;
     final urlCtrl = TextEditingController(text: prefillUrl ?? '');
 
     final confirmed = await showDialog<bool>(
@@ -805,11 +784,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
           controller: urlCtrl,
           autofocus: prefillUrl == null,
           keyboardType: TextInputType.url,
-          cursorColor: const Color(0xFF6C63FF),
+          cursorColor: accent,
           decoration: InputDecoration(
             hintText: 'https://example.com/sound.mp3',
-            focusedBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(color: Color(0xFF6C63FF)),
+            focusedBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: accent),
             ),
             suffixIcon: IconButton(
               icon: const Icon(Icons.content_paste_rounded, size: 18),
@@ -829,9 +808,9 @@ class _SoundboardScreenState extends State<SoundboardScreen>
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Download',
+            child: Text('Download',
                 style: TextStyle(
-                    color: Color(0xFF6C63FF),
+                    color: accent,
                     fontWeight: FontWeight.w600)),
           ),
         ],
@@ -854,11 +833,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const AlertDialog(
+      builder: (_) => AlertDialog(
         content: Row(children: [
-          CircularProgressIndicator(color: Color(0xFF6C63FF)),
-          SizedBox(width: 20),
-          Text('Downloading…'),
+          CircularProgressIndicator(color: accent),
+          const SizedBox(width: 20),
+          const Text('Downloading…'),
         ]),
       ),
     );
@@ -948,6 +927,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   // ── Stats ─────────────────────────────────────────────────────────────────
 
   void _showStats() {
+    final accent = Theme.of(context).colorScheme.primary;
     final totalPlays = _playCounts.values.fold(0, (a, b) => a + b);
 
     // Top 5 sounds by play count.
@@ -998,8 +978,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                 // Title row
                 Row(
                   children: [
-                    const Icon(Icons.bar_chart_rounded,
-                        color: Color(0xFF6C63FF), size: 22),
+                    Icon(Icons.bar_chart_rounded,
+                        color: accent, size: 22),
                     const SizedBox(width: 10),
                     Builder(builder: (ctx) => Text(
                       'Play Stats',
@@ -1058,7 +1038,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                           ? '${(totalPlays / 1000).toStringAsFixed(1)}k'
                           : '$totalPlays',
                       icon: Icons.play_arrow_rounded,
-                      color: const Color(0xFF6C63FF),
+                      color: accent,
                     ),
                     const SizedBox(width: 10),
                     _StatCard(
@@ -1131,8 +1111,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                                       backgroundColor:
                                           sc.textPrimary.withValues(alpha: 0.07),
                                       valueColor:
-                                          const AlwaysStoppedAnimation(
-                                              Color(0xFF6C63FF)),
+                                          AlwaysStoppedAnimation(accent),
                                       minHeight: 4,
                                     ),
                                   ),
@@ -1619,9 +1598,21 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         if (_lastBackPress == null ||
             now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
           _lastBackPress = now;
+          final accent = Theme.of(context).colorScheme.primary;
+          final bodyStyle = Theme.of(context).textTheme.bodyMedium!;
+          final sc = Theme.of(context).extension<AppColors>()!;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('Press back again to exit'),
+              content: Row(
+                children: [
+                  Icon(Icons.exit_to_app_rounded, size: 17, color: accent),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Press back again to exit',
+                    style: bodyStyle.copyWith(color: sc.textPrimary),
+                  ),
+                ],
+              ),
               duration: const Duration(seconds: 2),
               margin: const EdgeInsets.only(bottom: 24, left: 16, right: 16),
             ),
@@ -1649,7 +1640,24 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     );
   }
 
+  static const _accentPresets = [
+    Color(0xFF6C63FF),
+    Color(0xFF2196F3),
+    Color(0xFF00BCD4),
+    Color(0xFF4CAF50),
+    Color(0xFFFF9800),
+    Color(0xFFE91E63),
+  ];
+
   Widget _buildDrawer(AppColors c) {
+    final isDark = widget.themeNotifier.value == ThemeMode.dark;
+    final currentAccent = widget.accentNotifier.value;
+
+    void nav(Widget screen) {
+      Navigator.pop(context);
+      Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+    }
+
     return Drawer(
       backgroundColor: c.drawerBg,
       child: SafeArea(
@@ -1663,10 +1671,9 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                 Container(
                   width: 44, height: 44,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF6C63FF).withValues(alpha: 0.14),
+                    color: currentAccent.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(13),
-                    border: Border.all(
-                        color: const Color(0xFF6C63FF).withValues(alpha: 0.30)),
+                    border: Border.all(color: currentAccent.withValues(alpha: 0.30)),
                   ),
                   child: const Center(
                     child: Text('🔊', style: TextStyle(fontSize: 22)),
@@ -1677,14 +1684,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Soundr', style: TextStyle(
-                      color: c.textPrimary,
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -0.5,
+                      color: c.textPrimary, fontSize: 17,
+                      fontWeight: FontWeight.w700, letterSpacing: -0.5,
                     )),
                     Text('Your personal soundboard', style: TextStyle(
-                      color: c.iconSecondary,
-                      fontSize: 11,
+                      color: c.iconSecondary, fontSize: 11,
                     )),
                   ],
                 ),
@@ -1693,57 +1697,129 @@ class _SoundboardScreenState extends State<SoundboardScreen>
             Divider(color: c.borderSubtle, height: 1),
             const SizedBox(height: 8),
 
-            // ── Nav items ────────────────────────────────────────────────────
+            // ── Soundboard ───────────────────────────────────────────────────
             _DrawerItem(
               icon: Icons.grid_view_rounded,
               label: 'Soundboard',
               active: true,
               onTap: () => Navigator.pop(context),
             ),
+
+            // ── Morse Tapper ─────────────────────────────────────────────────
+            _DrawerSectionLabel('MORSE TAPPER'),
             _DrawerItem(
               icon: Icons.radio_rounded,
               label: 'Morse Code Tapper',
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MorseScreen(
-                      dotSource:  _preloaded['s148'],
-                      dashSource: _preloaded['s149'],
-                    ),
-                  ),
-                );
-              },
+              onTap: () => nav(MorseScreen(
+                dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+              )),
             ),
+            _DrawerItem(
+              icon: Icons.quiz_rounded,
+              label: 'Morse Tapper Quiz Game',
+              onTap: () => nav(MorseTapperQuizScreen(
+                dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+              )),
+            ),
+
+            // ── Morse Soundr ─────────────────────────────────────────────────
+            _DrawerSectionLabel('MORSE SOUNDR'),
             _DrawerItem(
               icon: Icons.rss_feed_rounded,
               label: 'Morse Code Soundr',
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MorseSoundrScreen(
-                      dotSource:  _preloaded['s148'],
-                      dashSource: _preloaded['s149'],
-                    ),
-                  ),
-                );
-              },
+              onTap: () => nav(MorseSoundrScreen(
+                dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+              )),
+            ),
+            _DrawerItem(
+              icon: Icons.hearing_rounded,
+              label: 'Morse Soundr Quiz Game',
+              onTap: () => nav(MorseSoundrQuizScreen(
+                dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+              )),
             ),
 
             const Spacer(),
             Divider(color: c.borderSubtle, height: 1),
+
+            // ── App Preferences ──────────────────────────────────────────────
+            _DrawerSectionLabel('APP PREFERENCES'),
+
+            // Dark / Light toggle
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-              child: Text(
-                'Soundr v1.0',
-                style: TextStyle(
-                  color: c.textPrimary.withValues(alpha: 0.15),
-                  fontSize: 11,
-                ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(children: [
+                  Icon(
+                    isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+                    size: 20, color: c.iconSecondary,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      isDark ? 'Dark mode' : 'Light mode',
+                      style: TextStyle(
+                        color: c.textSecondary, fontSize: 15,
+                      ),
+                    ),
+                  ),
+                  Switch(
+                    value: isDark,
+                    onChanged: (v) {
+                      widget.themeNotifier.value =
+                          v ? ThemeMode.dark : ThemeMode.light;
+                    },
+                    activeThumbColor: currentAccent,
+                    activeTrackColor: currentAccent.withValues(alpha: 0.4),
+                  ),
+                ]),
               ),
+            ),
+
+            // Accent colour
+            Padding(
+              padding: const EdgeInsets.fromLTRB(26, 6, 20, 4),
+              child: Text('Accent colour', style: TextStyle(
+                color: c.textSecondary, fontSize: 13, fontWeight: FontWeight.w500,
+              )),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: _accentPresets.map((color) {
+                  final selected = currentAccent == color;
+                  return GestureDetector(
+                    onTap: () => widget.accentNotifier.value = color,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      width: 36, height: 36,
+                      decoration: BoxDecoration(
+                        color: color,
+                        shape: BoxShape.circle,
+                        border: selected
+                            ? Border.all(color: c.textPrimary, width: 2.5)
+                            : Border.all(color: Colors.transparent, width: 2.5),
+                        boxShadow: selected
+                            ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8)]
+                            : [],
+                      ),
+                      child: selected
+                          ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
+                          : null,
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+
+            Divider(color: c.borderSubtle, height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
+              child: Text('Soundr v1.0  ·  Made by RJ  ·  $_deviceId', style: TextStyle(
+                color: c.textPrimary.withValues(alpha: 0.15), fontSize: 11,
+              )),
             ),
           ],
         ),
@@ -1758,14 +1834,14 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
   PreferredSizeWidget _buildAppBar() {
     final c = Theme.of(context).extension<AppColors>()!;
-    final isDark = widget.themeNotifier.value == ThemeMode.dark;
+    final accent = Theme.of(context).colorScheme.primary;
     return AppBar(
       title: _isSearching
           ? TextField(
               controller: _searchController,
               autofocus: true,
               style: TextStyle(color: c.textPrimary, fontSize: 17),
-              cursorColor: const Color(0xFF6C63FF),
+              cursorColor: accent,
               decoration: InputDecoration(
                 hintText: 'Search sounds...',
                 hintStyle: TextStyle(color: c.iconSecondary),
@@ -1793,17 +1869,6 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                 ]
               : [
                   IconButton(
-                    icon: Icon(
-                      isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-                      color: c.textSecondary,
-                    ),
-                    tooltip: isDark ? 'Light mode' : 'Dark mode',
-                    onPressed: () {
-                      widget.themeNotifier.value =
-                          isDark ? ThemeMode.light : ThemeMode.dark;
-                    },
-                  ),
-                  IconButton(
                     icon: Icon(Icons.search_rounded, color: c.textPrimary),
                     tooltip: 'Search',
                     onPressed: _openSearch,
@@ -1824,6 +1889,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
   Widget _buildBody() {
     final c = Theme.of(context).extension<AppColors>()!;
+    final themeAccent = Theme.of(context).colorScheme.primary;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1850,7 +1916,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                         color: c.surfaceCard,
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
-                          color: const Color(0xFF6C63FF).withValues(alpha: 0.35),
+                          color: themeAccent.withValues(alpha: 0.35),
                           width: 1,
                         ),
                       ),
@@ -1860,16 +1926,14 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                         children: [
                           Icon(Icons.add_rounded,
                               size: 14,
-                              color: const Color(0xFF6C63FF)
-                                  .withValues(alpha: 0.8)),
+                              color: themeAccent.withValues(alpha: 0.8)),
                           const SizedBox(width: 4),
                           Text(
                             'Board',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
-                              color: const Color(0xFF6C63FF)
-                                  .withValues(alpha: 0.8),
+                              color: themeAccent.withValues(alpha: 0.8),
                             ),
                           ),
                         ],
@@ -1896,13 +1960,13 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       decoration: BoxDecoration(
                         color: active
-                            ? const Color(0xFF6C63FF)
-                            : const Color(0xFF6C63FF).withValues(alpha: 0.10),
+                            ? themeAccent
+                            : themeAccent.withValues(alpha: 0.10),
                         borderRadius: BorderRadius.circular(18),
                         border: Border.all(
                           color: active
-                              ? const Color(0xFF6C63FF)
-                              : const Color(0xFF6C63FF).withValues(alpha: 0.30),
+                              ? themeAccent
+                              : themeAccent.withValues(alpha: 0.30),
                         ),
                       ),
                       alignment: Alignment.center,
@@ -2300,7 +2364,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   Widget _buildStopOnTapFab(AppColors c) {
     final isActive = _stopOnTap;
     final isExpanded = _stopOnTap && _stopOnTapExpanded;
-    const accent = Color(0xFF6C63FF);
+    final accent = Theme.of(context).colorScheme.primary;
 
     return AnimatedSize(
       duration: const Duration(milliseconds: 300),
@@ -2383,7 +2447,7 @@ Color _categoryAccent(String category) => switch (category) {
   'Gaming'      => const Color(0xFF7B73FF),
   'Anime'       => const Color(0xFFFF9F7F),
   'Cartoons'    => const Color(0xFFFFD166),
-  'My Clips'    => const Color(0xFF6C63FF),
+  'My Clips'    => const Color(0xFF6C63FF), // fallback; callers should override with theme primary when available
   'Favorites'   => Colors.amber,
   _             => const Color(0xFF888780),
 };
@@ -2467,7 +2531,7 @@ class _DrawerItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF6C63FF);
+    final accent = Theme.of(context).colorScheme.primary;
     final c = Theme.of(context).extension<AppColors>()!;
     return InkWell(
       onTap: onTap,
@@ -2526,6 +2590,30 @@ class _SheetOption extends StatelessWidget {
               style: TextStyle(
                   color: effectiveColor, fontSize: 16, fontWeight: FontWeight.w500)),
         ]),
+      ),
+    );
+  }
+}
+
+// ── Drawer section label ──────────────────────────────────────────────────────
+
+class _DrawerSectionLabel extends StatelessWidget {
+  final String text;
+  const _DrawerSectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.2,
+          color: c.textMuted,
+        ),
       ),
     );
   }
@@ -2609,6 +2697,7 @@ class _SplashScreenState extends State<_SplashScreen>
                   minHeights: _minH,
                   maxHeights: _maxH,
                   phases: _phases,
+                  accent: const Color(0xFF6C63FF),
                 ),
               ),
             ),
@@ -2689,12 +2778,14 @@ class _BarsPainter extends CustomPainter {
   final List<double> minHeights;
   final List<double> maxHeights;
   final List<double> phases;   // per-bar phase offset in radians
+  final Color accent;
 
   const _BarsPainter({
     required this.t,
     required this.minHeights,
     required this.maxHeights,
     required this.phases,
+    required this.accent,
   });
 
   static const _barW = 11.0;
@@ -2707,19 +2798,21 @@ class _BarsPainter extends CustomPainter {
     final shaderRect = Rect.fromLTWH(0, 0, size.width, size.height);
 
     // Crisp gradient paint
+    final lightAccent = Color.lerp(accent, Colors.white, 0.45)!;
+    final darkAccent = Color.lerp(accent, Colors.black, 0.10)!;
     final barPaint = Paint()
-      ..shader = const LinearGradient(
+      ..shader = LinearGradient(
         begin: Alignment.bottomCenter,
         end: Alignment.topCenter,
-        colors: [Color(0xFF5A52E0), Color(0xFFD8D6FF)],
+        colors: [darkAccent, lightAccent],
       ).createShader(shaderRect);
 
     // Soft glow behind each bar
     final glowPaint = Paint()
-      ..shader = const LinearGradient(
+      ..shader = LinearGradient(
         begin: Alignment.bottomCenter,
         end: Alignment.topCenter,
-        colors: [Color(0xFF6C63FF), Color(0xFFB8B5FF)],
+        colors: [accent, lightAccent],
       ).createShader(shaderRect)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
 
@@ -2738,5 +2831,5 @@ class _BarsPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_BarsPainter old) => old.t != t;
+  bool shouldRepaint(_BarsPainter old) => old.t != t || old.accent != accent;
 }

@@ -6,8 +6,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import '../models/sound_model.dart';
 import '../services/clip_repository.dart';
+import '../theme/app_colors.dart';
 
-const _kAccent = Color(0xFF6C63FF);
 const _kWaveSamples = 30;
 
 class ClipEditorScreen extends StatefulWidget {
@@ -210,21 +210,18 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final accent = Theme.of(context).colorScheme.primary;
     return Scaffold(
-      backgroundColor: const Color(0xFF0E0E0E),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E0E0E),
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-        elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white70),
+          icon: Icon(Icons.arrow_back_ios_new_rounded, color: c.iconSecondary),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           _isEditMode ? 'Edit Clip' : 'New Clip',
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: c.textPrimary,
             fontWeight: FontWeight.w700,
             fontSize: 20,
             letterSpacing: -0.4,
@@ -236,14 +233,14 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
             child: TextButton(
               onPressed: _isSaving || _isLoading ? null : _save,
               child: _isSaving
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18, height: 18,
                       child: CircularProgressIndicator(
-                          strokeWidth: 2, color: _kAccent),
+                          strokeWidth: 2, color: accent),
                     )
-                  : const Text('Save',
+                  : Text('Save',
                       style: TextStyle(
-                          color: _kAccent,
+                          color: accent,
                           fontWeight: FontWeight.w700,
                           fontSize: 16)),
             ),
@@ -251,7 +248,7 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.white24))
+          ? Center(child: CircularProgressIndicator(color: c.textMuted))
           : SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
@@ -262,13 +259,13 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: _nameController,
-                    style: const TextStyle(color: Colors.white, fontSize: 16),
-                    cursorColor: _kAccent,
+                    style: TextStyle(color: c.textPrimary, fontSize: 16),
+                    cursorColor: accent,
                     decoration: InputDecoration(
                       hintText: 'Enter a name...',
-                      hintStyle: const TextStyle(color: Colors.white24),
+                      hintStyle: TextStyle(color: c.textMuted),
                       filled: true,
-                      fillColor: const Color(0xFF1A1A1A),
+                      fillColor: c.surfaceCard,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 14),
                       border: OutlineInputBorder(
@@ -277,7 +274,7 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                       focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14),
                           borderSide:
-                              const BorderSide(color: _kAccent, width: 1.5)),
+                              BorderSide(color: accent, width: 1.5)),
                     ),
                   ),
                   const SizedBox(height: 28),
@@ -296,17 +293,17 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                               horizontal: 16, vertical: 8),
                           decoration: BoxDecoration(
                             color: sel
-                                ? _kAccent.withValues(alpha: 0.18)
-                                : const Color(0xFF1A1A1A),
+                                ? accent.withValues(alpha: 0.18)
+                                : c.surfaceCard,
                             borderRadius: BorderRadius.circular(20),
                             border: Border.all(
-                              color: sel ? _kAccent : Colors.transparent,
+                              color: sel ? accent : c.border,
                               width: 1.5,
                             ),
                           ),
                           child: Text(cat,
                               style: TextStyle(
-                                  color: sel ? _kAccent : Colors.white54,
+                                  color: sel ? accent : c.textSecondary,
                                   fontSize: 13,
                                   fontWeight: FontWeight.w500)),
                         ),
@@ -329,11 +326,11 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                           height: 50,
                           decoration: BoxDecoration(
                             color: sel
-                                ? _kAccent.withValues(alpha: 0.18)
-                                : const Color(0xFF1A1A1A),
+                                ? accent.withValues(alpha: 0.18)
+                                : c.surfaceElevated,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: sel ? _kAccent : Colors.transparent,
+                              color: sel ? accent : Colors.transparent,
                               width: 1.5,
                             ),
                           ),
@@ -352,7 +349,7 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                   Text(
                     'Drag the handles to set start and end points',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.3),
+                      color: c.textMuted,
                       fontSize: 11,
                     ),
                   ),
@@ -364,10 +361,9 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                     child: Container(
                       width: double.infinity,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF141414),
+                        color: c.surfaceCard,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.06)),
+                        border: Border.all(color: c.borderSubtle),
                       ),
                       padding: const EdgeInsets.symmetric(
                           vertical: 16, horizontal: 12),
@@ -425,15 +421,13 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _TimeLabel(_fmt(_trimStart * _totalDuration),
-                            color: Colors.white60),
+                        _TimeLabel(_fmt(_trimStart * _totalDuration)),
                         _TimeLabel(
                           '${_fmt((_trimEnd - _trimStart) * _totalDuration)} selected',
-                          color: Colors.white30,
+                          dim: true,
                           fontSize: 11,
                         ),
-                        _TimeLabel(_fmt(_trimEnd * _totalDuration),
-                            color: Colors.white60),
+                        _TimeLabel(_fmt(_trimEnd * _totalDuration)),
                       ],
                     ),
                   ),
@@ -447,16 +441,16 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                         height: 64,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: _kAccent.withValues(alpha: 0.12),
+                          color: accent.withValues(alpha: 0.12),
                           border: Border.all(
-                              color: _kAccent.withValues(alpha: 0.5),
+                              color: accent.withValues(alpha: 0.5),
                               width: 1.5),
                         ),
                         child: Icon(
                           _isPlaying
                               ? Icons.pause_rounded
                               : Icons.play_arrow_rounded,
-                          color: _kAccent,
+                          color: accent,
                           size: 34,
                         ),
                       ),
@@ -526,7 +520,7 @@ class _TrimOverlayState extends State<_TrimOverlay> {
       child: CustomPaint(
         size: Size(w, 90),
         painter:
-            _TrimPainter(trimStart: widget.trimStart, trimEnd: widget.trimEnd),
+            _TrimPainter(trimStart: widget.trimStart, trimEnd: widget.trimEnd, accent: Theme.of(context).colorScheme.primary),
       ),
     );
   }
@@ -535,10 +529,9 @@ class _TrimOverlayState extends State<_TrimOverlay> {
 class _TrimPainter extends CustomPainter {
   final double trimStart;
   final double trimEnd;
+  final Color accent;
 
-  const _TrimPainter({required this.trimStart, required this.trimEnd});
-
-  static const _accent = _kAccent;
+  const _TrimPainter({required this.trimStart, required this.trimEnd, required this.accent});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -559,12 +552,12 @@ class _TrimPainter extends CustomPainter {
     // ── Tint selected region ─────────────────────────────────────────────
     canvas.drawRect(
       Rect.fromLTRB(startX, 0, endX, size.height),
-      Paint()..color = _accent.withValues(alpha: 0.12),
+      Paint()..color = accent.withValues(alpha: 0.12),
     );
 
     // ── Handle lines ─────────────────────────────────────────────────────
     final line = Paint()
-      ..color = _accent
+      ..color = accent
       ..strokeWidth = 2;
     canvas.drawLine(Offset(startX, 0), Offset(startX, size.height), line);
     canvas.drawLine(Offset(endX, 0), Offset(endX, size.height), line);
@@ -594,7 +587,7 @@ class _TrimPainter extends CustomPainter {
       bottomLeft: atTop ? Radius.zero : const Radius.circular(r),
       bottomRight: atTop ? Radius.zero : const Radius.circular(r),
     );
-    canvas.drawRRect(rrect, Paint()..color = _accent);
+    canvas.drawRRect(rrect, Paint()..color = accent);
 
     // Grip lines
     final grip = Paint()
@@ -608,7 +601,7 @@ class _TrimPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_TrimPainter old) =>
-      old.trimStart != trimStart || old.trimEnd != trimEnd;
+      old.trimStart != trimStart || old.trimEnd != trimEnd || old.accent != accent;
 }
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -618,30 +611,36 @@ class _Label extends StatelessWidget {
   const _Label(this.text);
 
   @override
-  Widget build(BuildContext context) => Text(
-        text,
-        style: const TextStyle(
-          color: Colors.white38,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 1.2,
-        ),
-      );
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return Text(
+      text,
+      style: TextStyle(
+        color: c.textMuted,
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 1.2,
+      ),
+    );
+  }
 }
 
 class _TimeLabel extends StatelessWidget {
   final String text;
-  final Color color;
+  final bool dim;
   final double fontSize;
-  const _TimeLabel(this.text, {required this.color, this.fontSize = 12});
+  const _TimeLabel(this.text, {this.dim = false, this.fontSize = 12});
 
   @override
-  Widget build(BuildContext context) => Text(
-        text,
-        style: TextStyle(
-          color: color,
-          fontSize: fontSize,
-          fontFeatures: const [FontFeature.tabularFigures()],
-        ),
-      );
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return Text(
+      text,
+      style: TextStyle(
+        color: dim ? c.textMuted : c.textSecondary,
+        fontSize: fontSize,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+  }
 }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/sound_model.dart';
+import '../theme/app_colors.dart';
 
 class SoundButton extends StatefulWidget {
   final SoundModel sound;
@@ -109,11 +110,11 @@ class _SoundButtonState extends State<SoundButton>
   }
 
   /// Splits the sound name into normal + highlighted spans for search queries.
-  List<TextSpan> _buildNameSpans() {
-    const baseStyle = TextStyle(
+  List<TextSpan> _buildNameSpans(Color textColor) {
+    final baseStyle = TextStyle(
       fontSize: 12.5,
       fontWeight: FontWeight.w600,
-      color: Colors.white,
+      color: textColor,
       height: 1.2,
     );
     final q = widget.highlightQuery.trim();
@@ -163,14 +164,13 @@ class _SoundButtonState extends State<SoundButton>
       'Gaming'      => const Color(0xFF7B73FF),
       'Anime'       => const Color(0xFFFF9F7F),
       'Cartoons'    => const Color(0xFFFFD166),
-      'My Clips'    => const Color(0xFF6C63FF),
+      'My Clips'    => Theme.of(context).colorScheme.primary,
       _             => const Color(0xFF888780),
     };
   }
 
   Color get _bg {
     if (widget.sound.customColor != null) {
-      // Derive a very dark tint from the custom color
       return Color.lerp(Color(widget.sound.customColor!), Colors.black, 0.88)!;
     }
     return switch (widget.sound.category) {
@@ -189,8 +189,35 @@ class _SoundButtonState extends State<SoundButton>
     };
   }
 
+  Color get _bgLight {
+    if (widget.sound.customColor != null) {
+      return Color.lerp(Color(widget.sound.customColor!), Colors.white, 0.82)!;
+    }
+    return switch (widget.sound.category) {
+      'Instruments' => const Color(0xFFFFF8E8),
+      'Memes'       => const Color(0xFFFFEEEE),
+      'Reactions'   => const Color(0xFFE8F4FF),
+      'Effects'     => const Color(0xFFE8FFF6),
+      'UI'          => const Color(0xFFF0EEFF),
+      'Music'       => const Color(0xFFFFEEF8),
+      'Animals'     => const Color(0xFFEEFFF0),
+      'Gaming'      => const Color(0xFFEEECFF),
+      'Anime'       => const Color(0xFFFFF3EE),
+      'Cartoons'    => const Color(0xFFFFFBEE),
+      'My Clips'    => const Color(0xFFF0EEFF),
+      _             => const Color(0xFFF5F5F5),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final c = Theme.of(context).extension<AppColors>()!;
+    final bg = isDark ? _bg : _bgLight;
+    final nameColor = isDark ? Colors.white : c.textPrimary;
+    final dimColor = isDark ? Colors.white.withValues(alpha: 0.28) : c.textMuted;
+    final starUnfavColor = isDark ? Colors.white.withValues(alpha: 0.2) : c.textMuted;
+
     final progress = widget.duration > 0
         ? (1.0 - _remaining / widget.duration).clamp(0.0, 1.0)
         : 0.0;
@@ -202,7 +229,7 @@ class _SoundButtonState extends State<SoundButton>
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           decoration: BoxDecoration(
-            color: _bg,
+            color: bg,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
               color: _isPlaying
@@ -260,7 +287,7 @@ class _SoundButtonState extends State<SoundButton>
                                   size: 15,
                                   color: widget.isFavorited
                                       ? Colors.amber
-                                      : Colors.white.withValues(alpha: 0.2),
+                                      : starUnfavColor,
                                 ),
                               ),
                             ),
@@ -272,7 +299,7 @@ class _SoundButtonState extends State<SoundButton>
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         text: TextSpan(
-                          children: _buildNameSpans(),
+                          children: _buildNameSpans(nameColor),
                         ),
                       ),
                       const SizedBox(height: 5),
@@ -289,7 +316,7 @@ class _SoundButtonState extends State<SoundButton>
                               fontWeight: FontWeight.w500,
                               color: _isPlaying
                                   ? _accent
-                                  : Colors.white.withValues(alpha: 0.28),
+                                  : dimColor,
                             ),
                           ),
                           const Spacer(),

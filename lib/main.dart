@@ -15,13 +15,14 @@ class SoundrApp extends StatefulWidget {
 }
 
 class _SoundrAppState extends State<SoundrApp> {
-  final _themeNotifier = ValueNotifier(ThemeMode.dark);
+  final _themeNotifier  = ValueNotifier(ThemeMode.dark);
+  final _accentNotifier = ValueNotifier<Color>(const Color(0xFF6C63FF));
 
   ThemeData _buildTheme(Brightness brightness) {
     final c = brightness == Brightness.dark ? AppColors.dark : AppColors.light;
     return ThemeData(
       colorScheme: ColorScheme.fromSeed(
-        seedColor: const Color(0xFF6C63FF),
+        seedColor: _accentNotifier.value,
         brightness: brightness,
       ),
       useMaterial3: true,
@@ -63,6 +64,7 @@ class _SoundrAppState extends State<SoundrApp> {
   @override
   void dispose() {
     _themeNotifier.dispose();
+    _accentNotifier.dispose();
     super.dispose();
   }
 
@@ -70,13 +72,19 @@ class _SoundrAppState extends State<SoundrApp> {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: _themeNotifier,
-      builder: (context, mode, _) => MaterialApp(
-        title: 'Soundr',
-        debugShowCheckedModeBanner: false,
-        theme: _buildTheme(Brightness.light),
-        darkTheme: _buildTheme(Brightness.dark),
-        themeMode: mode,
-        home: SoundboardScreen(themeNotifier: _themeNotifier),
+      builder: (context, mode, _) => ValueListenableBuilder<Color>(
+        valueListenable: _accentNotifier,
+        builder: (context, accent, child) => MaterialApp(
+          title: 'Soundr',
+          debugShowCheckedModeBanner: false,
+          theme: _buildTheme(Brightness.light),
+          darkTheme: _buildTheme(Brightness.dark),
+          themeMode: mode,
+          home: SoundboardScreen(
+            themeNotifier: _themeNotifier,
+            accentNotifier: _accentNotifier,
+          ),
+        ),
       ),
     );
   }

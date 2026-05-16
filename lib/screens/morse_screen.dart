@@ -37,6 +37,7 @@ class _MorseScreenState extends State<MorseScreen> {
   DateTime? _pressStart;
   bool _isPressed   = false;
   bool _isDashMode  = false; // true once press exceeds dot threshold
+  bool _isMuted     = false;
 
   // Adjustable timing values (milliseconds)
   int _dotThresholdMs = 260;  // how long a press must be held to count as a dash
@@ -108,6 +109,7 @@ class _MorseScreenState extends State<MorseScreen> {
   }
 
   void _playSymbol(bool isDash) {
+    if (_isMuted) return;
     final source = isDash ? widget.dashSource : widget.dotSource;
     if (source == null) return;
     try { SoLoud.instance.play(source); } catch (_) {}
@@ -146,6 +148,7 @@ class _MorseScreenState extends State<MorseScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) {
           final sc = Theme.of(ctx).extension<AppColors>()!;
+          final accent = Theme.of(ctx).colorScheme.primary;
           void update(VoidCallback fn) {
             setSheet(fn);
             setState(fn);
@@ -187,13 +190,13 @@ class _MorseScreenState extends State<MorseScreen> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF6C63FF).withValues(alpha: 0.15),
+                        color: accent.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
                         '${value}ms',
-                        style: const TextStyle(
-                          color: Color(0xFF6C63FF),
+                        style: TextStyle(
+                          color: accent,
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
@@ -203,11 +206,11 @@ class _MorseScreenState extends State<MorseScreen> {
                   const SizedBox(height: 6),
                   SliderTheme(
                     data: SliderTheme.of(ctx).copyWith(
-                      activeTrackColor: const Color(0xFF6C63FF),
+                      activeTrackColor: accent,
                       inactiveTrackColor: sc.textPrimary.withValues(alpha: 0.08),
-                      thumbColor: const Color(0xFF6C63FF),
+                      thumbColor: accent,
                       overlayColor:
-                          const Color(0xFF6C63FF).withValues(alpha: 0.12),
+                          accent.withValues(alpha: 0.12),
                       trackHeight: 2,
                       thumbShape: const RoundSliderThumbShape(
                           enabledThumbRadius: 6),
@@ -245,10 +248,10 @@ class _MorseScreenState extends State<MorseScreen> {
                   ),
                   const SizedBox(height: 20),
                   Row(children: [
-                    const Icon(Icons.tune_rounded,
-                        color: Color(0xFF6C63FF), size: 20),
+                    Icon(Icons.tune_rounded,
+                        color: accent, size: 20),
                     const SizedBox(width: 10),
-                    Text('Timing Settings', style: TextStyle(
+                    Text('Settings  ', style: TextStyle(
                       color: sc.textPrimary,
                       fontSize: 17,
                       fontWeight: FontWeight.w700,
@@ -267,7 +270,38 @@ class _MorseScreenState extends State<MorseScreen> {
                       )),
                     ),
                   ]),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 20),
+                  Row(children: [
+                    Icon(
+                      _isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+                      color: _isMuted ? accent : sc.iconSecondary,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Sounds', style: TextStyle(
+                            color: sc.textPrimary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          )),
+                          Text('Dot & dash audio feedback', style: TextStyle(
+                            color: sc.textMuted,
+                            fontSize: 11,
+                          )),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: !_isMuted,
+                      onChanged: (v) => update(() => _isMuted = !v),
+                      activeThumbColor: accent,
+                      activeTrackColor: accent.withValues(alpha: 0.5),
+                    ),
+                  ]),
+                  Divider(color: sc.border, height: 28),
 
                   slider(
                     label: 'Dash hold duration',
@@ -314,6 +348,7 @@ class _MorseScreenState extends State<MorseScreen> {
     final hasContent = _decodedText.isNotEmpty || _currentMorse.isNotEmpty;
 
     final c = Theme.of(context).extension<AppColors>()!;
+    final accent = Theme.of(context).colorScheme.primary;
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -346,48 +381,56 @@ class _MorseScreenState extends State<MorseScreen> {
         children: [
           // ── Decoded output ─────────────────────────────────────────────────
           Expanded(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Decoded letters
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 120),
-                      child: Text(
-                        _decodedText.isEmpty && _currentMorse.isEmpty
-                            ? '—'
-                            : _decodedText,
-                        key: ValueKey(_decodedText),
-                        style: TextStyle(
-                          color: _decodedText.isEmpty
-                              ? c.textPrimary.withValues(alpha: 0.08)
-                              : c.textPrimary,
-                          fontSize: 52,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 6,
-                          height: 1.1,
-                        ),
-                        textAlign: TextAlign.center,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: LayoutBuilder(
+                builder: (context, constraints) => Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: SizedBox(
+                      width: constraints.maxWidth,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Decoded letters
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 120),
+                            child: Text(
+                              _decodedText.isEmpty && _currentMorse.isEmpty
+                                  ? '—'
+                                  : _decodedText,
+                              key: ValueKey(_decodedText),
+                              style: TextStyle(
+                                color: _decodedText.isEmpty
+                                    ? c.textPrimary.withValues(alpha: 0.08)
+                                    : c.textPrimary,
+                                fontSize: 52,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 6,
+                                height: 1.1,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                          // Current symbols being entered
+                          AnimatedOpacity(
+                            duration: const Duration(milliseconds: 150),
+                            opacity: _currentMorse.isEmpty ? 0.0 : 1.0,
+                            child: Text(
+                              _displayMorse,
+                              style: TextStyle(
+                                color: accent,
+                                fontSize: 30,
+                                letterSpacing: 10,
+                                fontWeight: FontWeight.w300,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 24),
-                    // Current symbols being entered
-                    AnimatedOpacity(
-                      duration: const Duration(milliseconds: 150),
-                      opacity: _currentMorse.isEmpty ? 0.0 : 1.0,
-                      child: Text(
-                        _displayMorse,
-                        style: const TextStyle(
-                          color: Color(0xFF6C63FF),
-                          fontSize: 30,
-                          letterSpacing: 10,
-                          fontWeight: FontWeight.w300,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -410,21 +453,21 @@ class _MorseScreenState extends State<MorseScreen> {
                 width: double.infinity,
                 decoration: BoxDecoration(
                   color: _isDashMode
-                      ? const Color(0xFF1C1650)
+                      ? accent.withValues(alpha: 0.18)
                       : _isPressed
-                          ? const Color(0xFF211E52)
-                          : const Color(0xFF141420),
+                          ? accent.withValues(alpha: 0.12)
+                          : c.surfaceCard,
                   borderRadius: BorderRadius.circular(28),
                   border: Border.all(
                     color: _isPressed
-                        ? const Color(0xFF6C63FF)
-                        : const Color(0xFF6C63FF).withValues(alpha: 0.22),
+                        ? accent
+                        : accent.withValues(alpha: 0.22),
                     width: 1.5,
                   ),
                   boxShadow: _isPressed
                       ? [
                           BoxShadow(
-                            color: const Color(0xFF6C63FF).withValues(alpha: 0.28),
+                            color: accent.withValues(alpha: 0.28),
                             blurRadius: 28,
                           )
                         ]
@@ -440,8 +483,8 @@ class _MorseScreenState extends State<MorseScreen> {
                           ? Text(
                               _isDashMode ? '−' : '·',
                               key: ValueKey(_isDashMode),
-                              style: const TextStyle(
-                                color: Color(0xFF6C63FF),
+                              style: TextStyle(
+                                color: accent,
                                 fontSize: 44,
                                 fontWeight: FontWeight.w200,
                               ),
@@ -450,7 +493,7 @@ class _MorseScreenState extends State<MorseScreen> {
                               Icons.touch_app_rounded,
                               key: const ValueKey('idle'),
                               size: 36,
-                              color: c.textPrimary.withValues(alpha: 0.10),
+                              color: c.iconSecondary,
                             ),
                     ),
                     const SizedBox(height: 10),
@@ -460,8 +503,8 @@ class _MorseScreenState extends State<MorseScreen> {
                           : 'tap for ·    hold for −',
                       style: TextStyle(
                         color: _isPressed
-                            ? const Color(0xFF6C63FF).withValues(alpha: 0.65)
-                            : c.textPrimary.withValues(alpha: 0.18),
+                            ? accent.withValues(alpha: 0.65)
+                            : c.textMuted,
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
                         letterSpacing: 0.3,
@@ -540,43 +583,46 @@ class _MorseReferenceState extends State<_MorseReference> {
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeOut,
           child: _expanded
-              ? Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
-                  child: Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: _entries.map((e) {
-                      return Builder(builder: (bCtx) {
-                        final rc = Theme.of(bCtx).extension<AppColors>()!;
-                        return Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 9, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: rc.surfaceCard,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: rc.borderSubtle),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(e.$1,
-                                  style: TextStyle(
-                                    color: rc.textSecondary,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                  )),
-                              const SizedBox(width: 7),
-                              Text(e.$2,
-                                  style: const TextStyle(
-                                    color: Color(0xFF6C63FF),
-                                    fontSize: 11,
-                                    letterSpacing: 1.5,
-                                  )),
-                            ],
-                          ),
-                        );
-                      });
-                    }).toList(),
+              ? ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 170),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: _entries.map((e) {
+                        return Builder(builder: (bCtx) {
+                          final rc = Theme.of(bCtx).extension<AppColors>()!;
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 9, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: rc.surfaceCard,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: rc.borderSubtle),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(e.$1,
+                                    style: TextStyle(
+                                      color: rc.textSecondary,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    )),
+                                const SizedBox(width: 7),
+                                Text(e.$2,
+                                    style: TextStyle(
+                                      color: Theme.of(bCtx).colorScheme.primary,
+                                      fontSize: 14,
+                                      letterSpacing: 2.0,
+                                    )),
+                              ],
+                            ),
+                          );
+                        });
+                      }).toList(),
+                    ),
                   ),
                 )
               : const SizedBox.shrink(),

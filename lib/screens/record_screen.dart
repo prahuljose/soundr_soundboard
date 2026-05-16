@@ -7,6 +7,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
+import '../theme/app_colors.dart';
 import 'clip_editor_screen.dart';
 
 enum _RecordState { idle, recording, processing, stopped }
@@ -199,25 +200,21 @@ class _RecordScreenState extends State<RecordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
     return Scaffold(
-      backgroundColor: const Color(0xFF0E0E0E),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E0E0E),
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-        elevation: 0,
         centerTitle: true,
-        title: const Text(
+        title: Text(
           'Record Clip',
           style: TextStyle(
-            color: Colors.white,
+            color: c.textPrimary,
             fontWeight: FontWeight.w700,
             fontSize: 20,
             letterSpacing: -0.4,
           ),
         ),
         leading: IconButton(
-          icon: const Icon(Icons.close, color: Colors.white70),
+          icon: Icon(Icons.close, color: c.iconSecondary),
           onPressed:
               _state == _RecordState.recording || _state == _RecordState.processing
                   ? null
@@ -237,7 +234,7 @@ class _RecordScreenState extends State<RecordScreen> {
                 letterSpacing: -4,
                 color: _state == _RecordState.recording
                     ? Colors.redAccent
-                    : Colors.white24,
+                    : c.textMuted,
               ),
             ),
           ),
@@ -255,7 +252,7 @@ class _RecordScreenState extends State<RecordScreen> {
                 letterSpacing: 0.4,
                 color: _state == _RecordState.recording
                     ? Colors.redAccent.withValues(alpha: 0.7)
-                    : Colors.white38,
+                    : c.textSecondary,
               ),
             ),
           ),
@@ -270,7 +267,6 @@ class _RecordScreenState extends State<RecordScreen> {
                     children: List.generate(_kBarCount, (i) {
                       final amp = _ampHistory[i];
                       final height = 4.0 + amp * 64.0;
-                      // Older bars dimmer, newer bars brighter
                       final alpha = 0.25 + (i / _kBarCount) * 0.75;
                       return AnimatedContainer(
                         duration: const Duration(milliseconds: 80),
@@ -278,7 +274,7 @@ class _RecordScreenState extends State<RecordScreen> {
                         height: height,
                         margin: const EdgeInsets.symmetric(horizontal: 2),
                         decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: alpha),
+                          color: c.textPrimary.withValues(alpha: alpha),
                           borderRadius: BorderRadius.circular(2),
                         ),
                       );
@@ -328,9 +324,10 @@ class _RecordButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
     final isRecording = state == _RecordState.recording;
     final isProcessing = state == _RecordState.processing;
-    final color = isRecording ? Colors.redAccent : const Color(0xFF6C63FF);
+    final color = isRecording ? Colors.redAccent : Theme.of(context).colorScheme.primary;
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -339,7 +336,7 @@ class _RecordButton extends StatelessWidget {
         height: 80,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: isProcessing ? const Color(0xFF1E1E1E) : color,
+          color: isProcessing ? c.surfaceCard : color,
           boxShadow: isProcessing
               ? null
               : [
@@ -351,10 +348,10 @@ class _RecordButton extends StatelessWidget {
                 ],
         ),
         child: isProcessing
-            ? const Padding(
-                padding: EdgeInsets.all(24),
+            ? Padding(
+                padding: const EdgeInsets.all(24),
                 child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white38),
+                    strokeWidth: 2, color: c.textSecondary),
               )
             : Icon(
                 isRecording ? Icons.stop_rounded : Icons.mic_rounded,
@@ -387,7 +384,7 @@ class _PostRecordControls extends StatelessWidget {
         _ActionChip(
           icon: Icons.tune_rounded,
           label: 'Edit & Save',
-          color: const Color(0xFF6C63FF),
+          color: Theme.of(context).colorScheme.primary,
           onTap: onEdit,
         ),
       ],

@@ -34,6 +34,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
   int    _currentLetterIdx = -1;
   int    _currentSymbolIdx = -1;
   double _speed            = 1.0; // 0.5 – 2.0×
+  bool   _practiceMode     = false;
   int    _playSession      = 0;   // incremented to cancel in-flight playback
 
   // Actual sound durations — read from SoLoud after the sources are loaded.
@@ -46,8 +47,8 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
   static const _baseWordGapMs   = 720;  // for a space character
 
   Duration get _symbolGap => Duration(milliseconds: (_baseSymbolGapMs / _speed).round());
-  Duration get _letterGap => Duration(milliseconds: (_baseLetterGapMs / _speed).round());
-  Duration get _wordGap   => Duration(milliseconds: (_baseWordGapMs   / _speed).round());
+  Duration get _letterGap => Duration(milliseconds: (_baseLetterGapMs / _speed * (_practiceMode ? 3.5 : 1.0)).round());
+  Duration get _wordGap   => Duration(milliseconds: (_baseWordGapMs   / _speed * (_practiceMode ? 2.5 : 1.0)).round());
 
   String get _text => _textController.text.toUpperCase();
 
@@ -182,6 +183,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
         (currentChar != null && currentChar != ' ') ? _charToMorse[currentChar] : null;
 
     final c = Theme.of(context).extension<AppColors>()!;
+    final accent = Theme.of(context).colorScheme.primary;
     return Scaffold(
       resizeToAvoidBottomInset: true,
       appBar: AppBar(
@@ -209,7 +211,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                   inputFormatters: [
                     FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9 ]')),
                   ],
-                  cursorColor: const Color(0xFF6C63FF),
+                  cursorColor: accent,
                   decoration: InputDecoration(
                     hintText: 'Type a message…',
                     filled: true,
@@ -220,8 +222,8 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(
-                          color: Color(0xFF6C63FF), width: 1.5),
+                      borderSide: BorderSide(
+                          color: accent, width: 1.5),
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 14),
@@ -243,7 +245,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
           // ── Letter chip strip ──────────────────────────────────────────────
           if (text.isNotEmpty)
             SizedBox(
-              height: 44,
+              height: 64,
               child: ListView.separated(
                 controller: _chipController,
                 scrollDirection: Axis.horizontal,
@@ -256,47 +258,72 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
 
                   final isActive = i == _currentLetterIdx;
                   final isDone   = _isPlaying && i < _currentLetterIdx;
+                  final morseDisplay = (_charToMorse[ch] ?? '')
+                      .replaceAll('.', '·')
+                      .replaceAll('-', '−');
+
+                  final letterColor = isActive
+                      ? Colors.white
+                      : isDone
+                          ? accent.withValues(alpha: 0.5)
+                          : c.textSecondary;
+                  final morseColor = isActive
+                      ? Colors.white.withValues(alpha: 0.85)
+                      : isDone
+                          ? accent.withValues(alpha: 0.4)
+                          : accent.withValues(alpha: 0.7);
 
                   return AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
-                    width: 40,
-                    height: 40,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    constraints: const BoxConstraints(minWidth: 44),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: isActive
-                          ? const Color(0xFF6C63FF)
+                          ? accent
                           : isDone
-                              ? const Color(0xFF6C63FF).withValues(alpha: 0.12)
-                              : const Color(0xFF1A1A1A),
-                      borderRadius: BorderRadius.circular(10),
+                              ? accent.withValues(alpha: 0.12)
+                              : c.surfaceCard,
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(
                         color: isActive
-                            ? const Color(0xFF6C63FF)
-                            : Colors.white.withValues(alpha: 0.08),
+                            ? accent
+                            : c.border,
                       ),
                       boxShadow: isActive
                           ? [
                               BoxShadow(
-                                color: const Color(0xFF6C63FF)
+                                color: accent
                                     .withValues(alpha: 0.40),
                                 blurRadius: 14,
                               )
                             ]
                           : [],
                     ),
-                    child: Text(
-                      ch,
-                      style: TextStyle(
-                        color: isActive
-                            ? Colors.white
-                            : isDone
-                                ? const Color(0xFF6C63FF).withValues(alpha: 0.5)
-                                : Colors.white54,
-                        fontSize: 15,
-                        fontWeight: isActive
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          ch,
+                          style: TextStyle(
+                            color: letterColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            height: 1.0,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          morseDisplay,
+                          style: TextStyle(
+                            color: morseColor,
+                            fontSize: 10,
+                            letterSpacing: 1.5,
+                            fontWeight: FontWeight.w500,
+                            height: 1.0,
+                          ),
+                        ),
+                      ],
                     ),
                   );
                 },
@@ -319,8 +346,8 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                             // Current letter, large
                             Text(
                               currentChar!,
-                              style: const TextStyle(
-                                color: Colors.white,
+                              style: TextStyle(
+                                color: c.textPrimary,
                                 fontSize: 72,
                                 fontWeight: FontWeight.w700,
                                 height: 1.0,
@@ -342,19 +369,19 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                                     alignment: Alignment.center,
                                     decoration: BoxDecoration(
                                       color: isActive
-                                          ? const Color(0xFF6C63FF)
-                                          : const Color(0xFF1A1A1A),
+                                          ? accent
+                                          : c.surfaceCard,
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
                                         color: isActive
-                                            ? const Color(0xFF6C63FF)
-                                            : const Color(0xFF6C63FF)
+                                            ? accent
+                                            : accent
                                                 .withValues(alpha: 0.22),
                                       ),
                                       boxShadow: isActive
                                           ? [
                                               BoxShadow(
-                                                color: const Color(0xFF6C63FF)
+                                                color: accent
                                                     .withValues(alpha: 0.38),
                                                 blurRadius: 16,
                                               )
@@ -366,7 +393,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                                       style: TextStyle(
                                         color: isActive
                                             ? Colors.white
-                                            : const Color(0xFF6C63FF),
+                                            : accent,
                                         fontSize: 26,
                                         fontWeight: FontWeight.w300,
                                         height: 1.0,
@@ -384,12 +411,46 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                       text.isEmpty ? 'Type a message above\nthen tap Play' : '',
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.20),
+                        color: c.textMuted,
                         fontSize: 15,
                         height: 1.7,
                       ),
                     ),
             ),
+          ),
+
+          // ── Practice mode toggle ───────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+            child: Row(children: [
+              Icon(
+                Icons.school_rounded,
+                size: 18,
+                color: _practiceMode ? accent : c.iconSecondary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Practice mode',
+                        style: TextStyle(
+                          color: _practiceMode ? c.textPrimary : c.textSecondary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        )),
+                    Text('Longer pauses between letters',
+                        style: TextStyle(color: c.textMuted, fontSize: 10)),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _practiceMode,
+                onChanged: _isPlaying ? null : (v) => setState(() => _practiceMode = v),
+                activeThumbColor: accent,
+                activeTrackColor: accent.withValues(alpha: 0.5),
+              ),
+            ]),
           ),
 
           // ── Speed slider ───────────────────────────────────────────────────
@@ -398,17 +459,17 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
             child: Row(children: [
               Text('Slow',
                   style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.28),
+                      color: c.textMuted,
                       fontSize: 11,
                       fontWeight: FontWeight.w500)),
               Expanded(
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: const Color(0xFF6C63FF),
-                    inactiveTrackColor: Colors.white.withValues(alpha: 0.08),
-                    thumbColor: const Color(0xFF6C63FF),
+                    activeTrackColor: accent,
+                    inactiveTrackColor: c.border,
+                    thumbColor: accent,
                     overlayColor:
-                        const Color(0xFF6C63FF).withValues(alpha: 0.12),
+                        accent.withValues(alpha: 0.12),
                     trackHeight: 2,
                     thumbShape: const RoundSliderThumbShape(
                         enabledThumbRadius: 6),
@@ -428,7 +489,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
               ),
               Text('Fast',
                   style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.28),
+                      color: c.textMuted,
                       fontSize: 11,
                       fontWeight: FontWeight.w500)),
             ]),
@@ -444,10 +505,10 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                 duration: const Duration(milliseconds: 200),
                 decoration: BoxDecoration(
                   color: text.isEmpty
-                      ? const Color(0xFF1A1A1A)
+                      ? c.surfaceCard
                       : _isPlaying
                           ? const Color(0xFF2A0A0A)
-                          : const Color(0xFF6C63FF),
+                          : accent,
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
                     color: _isPlaying
@@ -458,7 +519,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                       ? [
                           BoxShadow(
                             color:
-                                const Color(0xFF6C63FF).withValues(alpha: 0.30),
+                                accent.withValues(alpha: 0.30),
                             blurRadius: 20,
                           )
                         ]
@@ -480,14 +541,14 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
                           _isPlaying
                               ? Icons.stop_rounded
                               : Icons.play_arrow_rounded,
-                          color: text.isEmpty ? Colors.white24 : Colors.white,
+                          color: text.isEmpty ? c.textMuted : Colors.white,
                           size: 28,
                         ),
                         const SizedBox(width: 8),
                         Text(
                           _isPlaying ? 'Stop' : 'Play',
                           style: TextStyle(
-                            color: text.isEmpty ? Colors.white24 : Colors.white,
+                            color: text.isEmpty ? c.textMuted : Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
