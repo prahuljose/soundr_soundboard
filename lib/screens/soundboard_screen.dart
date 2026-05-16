@@ -25,6 +25,7 @@ import 'morse_soundr_quiz_screen.dart';
 import 'record_screen.dart';
 import 'speed_round_screen.dart';
 import 'pair_match_screen.dart';
+import 'zen_screen.dart';
 
 class SoundboardScreen extends StatefulWidget {
   final ValueNotifier<ThemeMode> themeNotifier;
@@ -58,6 +59,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   bool _isSearching = false;
   String _searchQuery = '';
   final _searchController = TextEditingController();
+  final _drawerScrollController = ScrollController();
 
   // Favorites
   Set<String> _favorites = {};
@@ -75,6 +77,8 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   // Back-button guard
   DateTime? _lastBackPress;
   String _deviceId = '—';
+  int _logoTapCount = 0;
+  DateTime? _lastLogoTap;
 
   // ── Data ──────────────────────────────────────────────────────────────────
 
@@ -190,6 +194,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   void dispose() {
     _stopOnTapTimer?.cancel();
     _searchController.dispose();
+    _drawerScrollController.dispose();
     NotificationService.clearStopCallback();
     NotificationService.clearPlayCallback();
     SoLoud.instance.deinit();
@@ -1670,15 +1675,33 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
               child: Row(children: [
-                Container(
-                  width: 44, height: 44,
-                  decoration: BoxDecoration(
-                    color: currentAccent.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(13),
-                    border: Border.all(color: currentAccent.withValues(alpha: 0.30)),
-                  ),
-                  child: const Center(
-                    child: Text('🔊', style: TextStyle(fontSize: 22)),
+                GestureDetector(
+                  onTap: () {
+                    final now = DateTime.now();
+                    if (_lastLogoTap == null ||
+                        now.difference(_lastLogoTap!) > const Duration(milliseconds: 600)) {
+                      _logoTapCount = 0;
+                    }
+                    _lastLogoTap = now;
+                    _logoTapCount++;
+                    if (_logoTapCount >= 5) {
+                      _logoTapCount = 0;
+                      final src = _preloaded['s90'];
+                      if (src != null) {
+                        try { SoLoud.instance.play(src); } catch (_) {}
+                      }
+                    }
+                  },
+                  child: Container(
+                    width: 44, height: 44,
+                    decoration: BoxDecoration(
+                      color: currentAccent.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(color: currentAccent.withValues(alpha: 0.30)),
+                    ),
+                    child: const Center(
+                      child: Text('🔊', style: TextStyle(fontSize: 22)),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1697,70 +1720,97 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               ]),
             ),
             Divider(color: c.borderSubtle, height: 1),
-            const SizedBox(height: 8),
 
-            // ── Soundboard ───────────────────────────────────────────────────
-            _DrawerItem(
-              icon: Icons.grid_view_rounded,
-              label: 'Soundboard',
-              active: true,
-              onTap: () => Navigator.pop(context),
-            ),
+            // ── Scrollable nav items ──────────────────────────────────────────
+            Expanded(
+              child: Scrollbar(
+                controller: _drawerScrollController,
+                thumbVisibility: true,
+                trackVisibility: true,
+                thickness: 3,
+                radius: const Radius.circular(3),
+                child: SingleChildScrollView(
+                  controller: _drawerScrollController,
+                  child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 8),
 
-            // ── Morse Tapper ─────────────────────────────────────────────────
-            _DrawerSectionLabel('MORSE TAPPER'),
-            _DrawerItem(
-              icon: Icons.radio_rounded,
-              label: 'Morse Code Tapper',
-              onTap: () => nav(MorseScreen(
-                dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
-              )),
-            ),
-            _DrawerItem(
-              icon: Icons.quiz_rounded,
-              label: 'Morse Tapper Quiz Game',
-              onTap: () => nav(MorseTapperQuizScreen(
-                dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
-              )),
-            ),
+                    // ── Soundboard ───────────────────────────────────────────
+                    _DrawerItem(
+                      icon: Icons.grid_view_rounded,
+                      label: 'Soundboard',
+                      active: true,
+                      onTap: () => Navigator.pop(context),
+                    ),
 
-            // ── Morse Soundr ─────────────────────────────────────────────────
-            _DrawerSectionLabel('MORSE SOUNDR'),
-            _DrawerItem(
-              icon: Icons.rss_feed_rounded,
-              label: 'Morse Code Soundr',
-              onTap: () => nav(MorseSoundrScreen(
-                dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
-              )),
-            ),
-            _DrawerItem(
-              icon: Icons.hearing_rounded,
-              label: 'Morse Soundr Quiz Game',
-              onTap: () => nav(MorseSoundrQuizScreen(
-                dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
-              )),
-            ),
+                    // ── Morse Tapper ─────────────────────────────────────────
+                    _DrawerSectionLabel('MORSE TAPPER'),
+                    _DrawerItem(
+                      icon: Icons.radio_rounded,
+                      label: 'Morse Code Tapper',
+                      onTap: () => nav(MorseScreen(
+                        dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+                      )),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.quiz_rounded,
+                      label: 'Morse Tapper Quiz Game',
+                      onTap: () => nav(MorseTapperQuizScreen(
+                        dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+                      )),
+                    ),
 
-            // ── Sound Games ──────────────────────────────────────────────────
-            _DrawerSectionLabel('SOUND GAMES'),
-            _DrawerItem(
-              icon: Icons.bolt_rounded,
-              label: 'Speed Round',
-              onTap: () => nav(SpeedRoundScreen(
-                sounds: _allSounds,
-                preloaded: _preloaded,
-              )),
-            ),
-            _DrawerItem(
-              icon: Icons.grid_on_rounded,
-              label: 'Pair Match',
-              onTap: () => nav(PairMatchScreen(
-                sounds: _allSounds,
-                preloaded: _preloaded,
-              )),
-            ),
+                    // ── Morse Soundr ─────────────────────────────────────────
+                    _DrawerSectionLabel('MORSE SOUNDR'),
+                    _DrawerItem(
+                      icon: Icons.rss_feed_rounded,
+                      label: 'Morse Code Soundr',
+                      onTap: () => nav(MorseSoundrScreen(
+                        dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+                      )),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.hearing_rounded,
+                      label: 'Morse Soundr Quiz Game',
+                      onTap: () => nav(MorseSoundrQuizScreen(
+                        dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+                      )),
+                    ),
 
-            const Spacer(),
+                    // ── Zen Mode ─────────────────────────────────────────────
+                    _DrawerSectionLabel('ZEN MODE'),
+                    _DrawerItem(
+                      icon: Icons.self_improvement_rounded,
+                      label: 'Zen Mode',
+                      onTap: () => nav(const ZenScreen()),
+                    ),
+
+                    // ── Sound Games ──────────────────────────────────────────
+                    _DrawerSectionLabel('SOUND GAMES'),
+                    _DrawerItem(
+                      icon: Icons.bolt_rounded,
+                      label: 'Speed Round',
+                      onTap: () => nav(SpeedRoundScreen(
+                        sounds: _allSounds,
+                        preloaded: _preloaded,
+                      )),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.grid_on_rounded,
+                      label: 'Pair Match',
+                      onTap: () => nav(PairMatchScreen(
+                        sounds: _allSounds,
+                        preloaded: _preloaded,
+                      )),
+                    ),
+
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            ),
+          ),
             Divider(color: c.borderSubtle, height: 1),
 
             // ── App Preferences ──────────────────────────────────────────────
