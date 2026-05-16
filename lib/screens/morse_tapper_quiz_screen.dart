@@ -38,6 +38,7 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
   _Phase _phase = _Phase.waiting;
   bool _isCorrect = false;
   bool _showHint = false;
+  bool _isMuted = false;
 
   bool _isPressed = false;
   bool _isDashMode = false;
@@ -63,7 +64,6 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
       _targetChar = next;
       _currentMorse = '';
       _phase = _Phase.waiting;
-      _isCorrect = false;
       _isPressed = false;
       _isDashMode = false;
       _showHint = false;
@@ -137,6 +137,7 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
   }
 
   void _playSymbol(bool isDash) {
+    if (_isMuted) return;
     final source = isDash ? widget.dashSource : widget.dotSource;
     if (source == null) return;
     try {
@@ -176,6 +177,15 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            icon: Icon(
+              _isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
+              color: _isMuted ? c.textMuted : c.textSecondary,
+              size: 22,
+            ),
+            tooltip: _isMuted ? 'Unmute' : 'Mute',
+            onPressed: () => setState(() => _isMuted = !_isMuted),
+          ),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -323,8 +333,8 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
                     boxShadow: _isPressed
                         ? [
                             BoxShadow(
-                              color: accent.withValues(alpha: 0.28),
-                              blurRadius: 28,
+                              color: accent.withValues(alpha: 0.12),
+                              blurRadius: 12,
                             ),
                           ]
                         : [],

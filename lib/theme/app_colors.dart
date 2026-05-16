@@ -59,6 +59,7 @@ class AppColors extends ThemeExtension<AppColors> {
     borderSubtle:    Color(0xFFE5E5EA),
     handleBar:       Color(0xFFC7C7CC),
     iconSecondary:   Color(0xFF8E8E93),
+    snackbarBg:      Color(0xFFE5E5EA),
   );
 
   @override

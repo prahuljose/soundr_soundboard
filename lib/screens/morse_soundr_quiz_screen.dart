@@ -78,7 +78,6 @@ class _MorseSoundrQuizScreenState extends State<MorseSoundrQuizScreen> {
     setState(() {
       _targetChar = _randomChar();
       _phase = _Phase.idle;
-      _isCorrect = false;
       _playCount = 0;
       _answerController.clear();
     });

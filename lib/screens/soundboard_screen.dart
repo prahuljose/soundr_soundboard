@@ -23,6 +23,8 @@ import 'morse_soundr_screen.dart';
 import 'morse_tapper_quiz_screen.dart';
 import 'morse_soundr_quiz_screen.dart';
 import 'record_screen.dart';
+import 'speed_round_screen.dart';
+import 'pair_match_screen.dart';
 
 class SoundboardScreen extends StatefulWidget {
   final ValueNotifier<ThemeMode> themeNotifier;
@@ -1736,6 +1738,25 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               label: 'Morse Soundr Quiz Game',
               onTap: () => nav(MorseSoundrQuizScreen(
                 dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+              )),
+            ),
+
+            // ── Sound Games ──────────────────────────────────────────────────
+            _DrawerSectionLabel('SOUND GAMES'),
+            _DrawerItem(
+              icon: Icons.bolt_rounded,
+              label: 'Speed Round',
+              onTap: () => nav(SpeedRoundScreen(
+                sounds: _allSounds,
+                preloaded: _preloaded,
+              )),
+            ),
+            _DrawerItem(
+              icon: Icons.grid_on_rounded,
+              label: 'Pair Match',
+              onTap: () => nav(PairMatchScreen(
+                sounds: _allSounds,
+                preloaded: _preloaded,
               )),
             ),
 

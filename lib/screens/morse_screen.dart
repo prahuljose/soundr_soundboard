@@ -467,8 +467,8 @@ class _MorseScreenState extends State<MorseScreen> {
                   boxShadow: _isPressed
                       ? [
                           BoxShadow(
-                            color: accent.withValues(alpha: 0.28),
-                            blurRadius: 28,
+                            color: accent.withValues(alpha: 0.12),
+                            blurRadius: 12,
                           )
                         ]
                       : [],
