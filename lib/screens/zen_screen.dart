@@ -3,11 +3,23 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show Ticker;
 import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../theme/app_colors.dart';
+
+// ── Zen notification globals ─────────────────────────────────────────────────
+final _zenNotifPlugin = FlutterLocalNotificationsPlugin();
+const _kZenNotifId   = 888;
+const _kZenChannelId = 'zen_ambient';
+
+/// Background handler — app is fully killed so sounds are already silent;
+/// we only need to satisfy the flutter_local_notifications API.
+@pragma('vm:entry-point')
+void _onBgZenNotif(NotificationResponse _) {}
 
 class _ZenTrack {
   final String id;
@@ -43,6 +55,42 @@ class _ZenPreset {
   Map<String, dynamic> toJson() => {'id': id, 'name': name, 'volumes': volumes};
 }
 
+class _ZenStats {
+  int totalSeconds;
+  int weeklySeconds;
+  String weekStartIso;
+  int sessionsCount;
+  int currentStreak;
+  String lastUsedIso;
+
+  _ZenStats({
+    this.totalSeconds = 0,
+    this.weeklySeconds = 0,
+    this.weekStartIso = '',
+    this.sessionsCount = 0,
+    this.currentStreak = 0,
+    this.lastUsedIso = '',
+  });
+
+  factory _ZenStats.fromJson(Map<String, dynamic> j) => _ZenStats(
+        totalSeconds:  (j['totalSeconds']  as num?)?.toInt() ?? 0,
+        weeklySeconds: (j['weeklySeconds'] as num?)?.toInt() ?? 0,
+        weekStartIso:   j['weekStartIso']  as String? ?? '',
+        sessionsCount: (j['sessionsCount'] as num?)?.toInt() ?? 0,
+        currentStreak: (j['currentStreak'] as num?)?.toInt() ?? 0,
+        lastUsedIso:    j['lastUsedIso']   as String? ?? '',
+      );
+
+  Map<String, dynamic> toJson() => {
+        'totalSeconds':  totalSeconds,
+        'weeklySeconds': weeklySeconds,
+        'weekStartIso':  weekStartIso,
+        'sessionsCount': sessionsCount,
+        'currentStreak': currentStreak,
+        'lastUsedIso':   lastUsedIso,
+      };
+}
+
 class ZenScreen extends StatefulWidget {
   const ZenScreen({super.key});
 
@@ -51,25 +99,31 @@ class ZenScreen extends StatefulWidget {
 }
 
 class _ZenScreenState extends State<ZenScreen> {
+  // Singleton ref so the background-notification action can reach the live state.
+  static _ZenScreenState? _instance;
+  // Guard so the channel + plugin is only initialised once per process lifetime.
+  static bool _notifsReady = false;
+
   static const _tracks = [
-    _ZenTrack(id: 'zen_rain',      name: 'Rain',            emoji: '🌧️', description: 'Gentle rainfall',              file: 'rain_sound.wav'),
-    _ZenTrack(id: 'zen_thunder',   name: 'Thunderstorm',    emoji: '⛈️', description: 'Distant thunder',    file: 'thunderstorm.wav'),
-    _ZenTrack(id: 'zen_forest',    name: 'Forest',          emoji: '🌲', description: 'Birds and rustling leaves',    file: 'forest_sounds.wav'),
-    _ZenTrack(id: 'zen_ocean',     name: 'Ocean Waves',     emoji: '🌊', description: 'Rhythmic waves on shore',      file: 'ocean_waves.wav'),
+    _ZenTrack(id: 'zen_rain',      name: 'Rain',            emoji: '🌧️', description: 'Gentle rainfall',              file: 'rain_sound.mp3'),
+    _ZenTrack(id: 'zen_thunder',   name: 'Thunderstorm',    emoji: '⛈️', description: 'Distant thunder',    file: 'thunderstorm.mp3'),
+    _ZenTrack(id: 'zen_forest',    name: 'Forest',          emoji: '🌲', description: 'Birds and rustling leaves',    file: 'forest_sounds.mp3'),
+    _ZenTrack(id: 'zen_ocean',     name: 'Ocean Waves',     emoji: '🌊', description: 'Rhythmic waves on shore',      file: 'ocean_waves.mp3'),
     _ZenTrack(id: 'zen_fire',      name: 'Fireplace',       emoji: '🔥', description: 'Crackling fire',              file: 'fireplace.mp3'),
-    _ZenTrack(id: 'zen_cafe',      name: 'Café',            emoji: '☕', description: 'Quiet coffee shop ambience',  file: 'coffee_shop.wav'),
-    _ZenTrack(id: 'zen_wind',      name: 'Wind',            emoji: '🌬️', description: 'Soft breeze through trees',   file: 'windy.wav'),
+    _ZenTrack(id: 'zen_cafe',      name: 'Café',            emoji: '☕', description: 'Quiet coffee shop ambience',  file: 'coffee_shop.mp3'),
+    _ZenTrack(id: 'zen_wind',      name: 'Wind',            emoji: '🌬️', description: 'Soft breeze through trees',   file: 'windy.mp3'),
     _ZenTrack(id: 'zen_white',     name: 'White Noise',     emoji: '📻', description: 'Steady background hiss',      file: 'white_noise.mp3'),
-    _ZenTrack(id: 'zen_stream',    name: 'Mountain Stream', emoji: '🏔️', description: 'Flowing water over rocks',    file: 'mountain_stream.wav'),
-    _ZenTrack(id: 'zen_night',     name: 'Night Crickets',  emoji: '🦗', description: 'Summer evening insects',      file: 'night_crickets.wav'),
-    _ZenTrack(id: 'zen_pad1',      name: 'Drift',           emoji: '🌌', description: 'Soft synthetic horizon',      file: 'ambient_pad1.wav'),
-    _ZenTrack(id: 'zen_pad2',      name: 'Ether',           emoji: '🔮', description: 'Warm atmospheric haze',       file: 'ambient_pad2.wav'),
-    _ZenTrack(id: 'zen_pad3',      name: 'Cosmos',          emoji: '✨', description: 'Deep space resonance',        file: 'ambient_pad3.wav'),
-    _ZenTrack(id: 'zen_pad4',      name: 'Aurora',          emoji: '🌠', description: 'Shimmering celestial tone',   file: 'ambient_pad4.wav'),
-    _ZenTrack(id: 'zen_guitar',    name: 'Guitar Loop',     emoji: '🎸', description: 'Gentle acoustic melody',       file: 'intentions_guitar_loop.wav'),
-    _ZenTrack(id: 'zen_farm',      name: 'Farm Morning',    emoji: '🐔', description: 'Countryside waking up',        file: 'farm_chicken_sound.wav'),
-    _ZenTrack(id: 'zen_simmer',    name: 'Simmering',       emoji: '♨️', description: 'Bubbling pot, warm kitchen',   file: 'pot_of_boiling_water.wav'),
-    _ZenTrack(id: 'zen_underwater',name: 'Deep Blue',       emoji: '🐠', description: 'Subaquatic serenity',          file: 'underwater_sounds.wav'),
+    _ZenTrack(id: 'zen_stream',    name: 'Mountain Stream', emoji: '🏔️', description: 'Flowing water over rocks',    file: 'mountain_stream.mp3'),
+    _ZenTrack(id: 'zen_night',     name: 'Night Crickets',  emoji: '🦗', description: 'Summer evening insects',      file: 'night_crickets.mp3'),
+    _ZenTrack(id: 'zen_pad1',      name: 'Drift',           emoji: '🌌', description: 'Soft synthetic horizon',      file: 'ambient_pad1.mp3'),
+    _ZenTrack(id: 'zen_pad2',      name: 'Ether',           emoji: '🔮', description: 'Warm atmospheric haze',       file: 'ambient_pad2.mp3'),
+    _ZenTrack(id: 'zen_pad3',      name: 'Cosmos',          emoji: '✨', description: 'Deep space resonance',        file: 'ambient_pad3.mp3'),
+    _ZenTrack(id: 'zen_pad4',      name: 'Aurora',          emoji: '🌠', description: 'Shimmering celestial tone',   file: 'ambient_pad4.mp3'),
+    _ZenTrack(id: 'zen_guitar',    name: 'Guitar Loop',     emoji: '🎸', description: 'Gentle acoustic melody',       file: 'intentions_guitar_loop.mp3'),
+    _ZenTrack(id: 'zen_farm',      name: 'Farm Morning',    emoji: '🐔', description: 'Countryside waking up',        file: 'farm_chicken_sound.mp3'),
+    _ZenTrack(id: 'zen_simmer',    name: 'Simmering',       emoji: '♨️', description: 'Bubbling pot, warm kitchen',   file: 'pot_of_boiling_water.mp3'),
+    _ZenTrack(id: 'zen_underwater',name: 'Deep Blue',       emoji: '🐠', description: 'Subaquatic serenity',          file: 'underwater_sounds.mp3'),
+    _ZenTrack(id: 'zen_clock',     name: 'Ticking Clock',   emoji: '🕰️', description: 'Steady mechanical tick-tock',  file: 'ticking_clock.mp3'),
   ];
 
   // Loaded sources — only populated for tracks whose file exists
@@ -93,21 +147,129 @@ class _ZenScreenState extends State<ZenScreen> {
   // Saved presets
   List<_ZenPreset> _presets = [];
 
+  // Pinned / favourite track IDs
+  Set<String> _favourites = {};
+
+  // Usage stats
+  _ZenStats _stats = _ZenStats();
+  DateTime? _playStart; // non-null while any track is playing
+
+  // Fires every minute to refresh the elapsed-time in the notification
+  Timer? _notifTimer;
+
   @override
   void initState() {
     super.initState();
+    _instance = this;
     _probeAssets();
     _loadPresets();
+    _loadFavourites();
+    _loadStats();
+    _initNotifications();
   }
 
   @override
   void dispose() {
-    // _stopAll stops both active and fading-out handles and clears both maps
+    if (_instance == this) _instance = null;
+    _notifTimer?.cancel();
+    // Record any in-progress session before tearing down
+    _recordElapsed();
     _stopAll(notify: false);
+    _cancelNotification();
     for (final src in _sources.values) {
       try { SoLoud.instance.disposeSource(src); } catch (_) {}
     }
     super.dispose();
+  }
+
+  // ── Notifications ────────────────────────────────────────────────────────
+
+  Future<void> _initNotifications() async {
+    if (_notifsReady) return;
+    // Create the low-importance Android channel (no sound, no vibration).
+    final androidPlugin = _zenNotifPlugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _kZenChannelId, 'Zen Mode',
+        description: 'Ambient sound playback controls',
+        importance: Importance.low,
+        playSound: false,
+        enableVibration: false,
+        showBadge: false,
+      ),
+    );
+    await _zenNotifPlugin.initialize(
+      const InitializationSettings(
+        android: AndroidInitializationSettings('@drawable/ic_stat_soundr'),
+        iOS: DarwinInitializationSettings(requestSoundPermission: false),
+      ),
+      onDidReceiveNotificationResponse: (r) {
+        if (r.actionId == 'stop_all') _instance?._stopAll();
+      },
+      onDidReceiveBackgroundNotificationResponse: _onBgZenNotif,
+    );
+    _notifsReady = true;
+  }
+
+  /// Formats a duration into a human-readable elapsed string for the notification.
+  static String _fmtElapsed(Duration d) {
+    final mins = d.inMinutes;
+    if (mins < 1) return '';
+    if (mins < 60) return '$mins min';
+    final h = mins ~/ 60;
+    final m = mins % 60;
+    return m == 0 ? '${h}h' : '${h}h ${m}m';
+  }
+
+  /// Post (or refresh) the ongoing notification listing what's playing.
+  Future<void> _showOrUpdateNotification() async {
+    if (!_notifsReady) return;
+    final playing = _tracks.where((t) => _handles.containsKey(t.id)).toList();
+    if (playing.isEmpty) return;
+    final names = playing.map((t) => '${t.emoji} ${t.name}').join('  ·  ');
+    // Second line: "X min in Zen Mode" — only shown once a minute has elapsed
+    final elapsedStr = _playStart != null
+        ? _fmtElapsed(DateTime.now().difference(_playStart!))
+        : '';
+    final body = elapsedStr.isEmpty
+        ? names
+        : '$names\n$elapsedStr in Zen Mode';
+    final androidDetails = AndroidNotificationDetails(
+      _kZenChannelId, 'Zen Mode',
+      channelDescription: 'Ambient sound playback controls',
+      importance: Importance.low,
+      priority: Priority.low,
+      ongoing: true,
+      autoCancel: false,
+      playSound: false,
+      enableVibration: false,
+      // BigTextStyleInformation preserves the \n as a real second line
+      styleInformation: BigTextStyleInformation(body),
+      actions: const [
+        AndroidNotificationAction(
+          'stop_all', 'Stop all',
+          // showsUserInterface routes the tap through the main isolate so
+          // onDidReceiveNotificationResponse (and _instance._stopAll) fires.
+          showsUserInterface: true,
+          cancelNotification: false, // we cancel it ourselves inside _stopAll
+        ),
+      ],
+    );
+    try {
+      await _zenNotifPlugin.show(
+        _kZenNotifId,
+        '🧘 Zen Mode',
+        body,
+        NotificationDetails(android: androidDetails),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _cancelNotification() async {
+    try {
+      await _zenNotifPlugin.cancel(_kZenNotifId);
+    } catch (_) {}
   }
 
   // Try loading each track silently to know which files exist
@@ -143,6 +305,7 @@ class _ZenScreenState extends State<ZenScreen> {
         _handles.remove(track.id);
         _fadingOut[track.id] = handle;
       });
+      _onHandlesUpdated(); // may end session if last track
       try {
         SoLoud.instance.fadeVolume(handle, 0.0, _fadeDuration);
       } catch (_) {}
@@ -185,6 +348,7 @@ class _ZenScreenState extends State<ZenScreen> {
           _handles[track.id] = handle;
           _loading.remove(track.id);
         });
+        _onHandlesUpdated(); // may start session if first track
       } else {
         // Widget disposed before play completed
         try { SoLoud.instance.stop(handle); } catch (_) {}
@@ -201,6 +365,43 @@ class _ZenScreenState extends State<ZenScreen> {
     try {
       SoLoud.instance.setVolume(handle, value / 50.0);
     } catch (_) {}
+  }
+
+  // ── Favourites persistence ───────────────────────────────────────────────
+
+  Future<File> _favouritesFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/zen_favourites.json');
+  }
+
+  Future<void> _loadFavourites() async {
+    try {
+      final file = await _favouritesFile();
+      if (await file.exists()) {
+        final list = jsonDecode(await file.readAsString()) as List;
+        if (mounted) {
+          setState(() => _favourites = list.cast<String>().toSet());
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _persistFavourites() async {
+    try {
+      final file = await _favouritesFile();
+      await file.writeAsString(jsonEncode(_favourites.toList()));
+    } catch (_) {}
+  }
+
+  void _toggleFavourite(String trackId) {
+    setState(() {
+      if (_favourites.contains(trackId)) {
+        _favourites.remove(trackId);
+      } else {
+        _favourites.add(trackId);
+      }
+    });
+    _persistFavourites();
   }
 
   // ── Preset persistence ──────────────────────────────────────────────────
@@ -229,6 +430,143 @@ class _ZenScreenState extends State<ZenScreen> {
       final file = await _presetsFile();
       await file.writeAsString(jsonEncode(_presets.map((p) => p.toJson()).toList()));
     } catch (_) {}
+  }
+
+  // ── Usage stats ──────────────────────────────────────────────────────────
+
+  static String _todayIso() {
+    final n = DateTime.now();
+    return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
+  }
+
+  static String _mondayIso() {
+    final n = DateTime.now();
+    final mon = n.subtract(Duration(days: n.weekday - 1));
+    return '${mon.year}-${mon.month.toString().padLeft(2, '0')}-${mon.day.toString().padLeft(2, '0')}';
+  }
+
+  static bool _isYesterday(String isoA, String isoB) {
+    try {
+      return DateTime.parse(isoB).difference(DateTime.parse(isoA)).inDays == 1;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<File> _statsFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/zen_stats.json');
+  }
+
+  Future<void> _loadStats() async {
+    try {
+      final file = await _statsFile();
+      if (await file.exists()) {
+        final s = _ZenStats.fromJson(
+            jsonDecode(await file.readAsString()) as Map<String, dynamic>);
+        // Reset weekly counter if a new week has started
+        final monday = _mondayIso();
+        if (s.weekStartIso != monday) {
+          s.weeklySeconds = 0;
+          s.weekStartIso = monday;
+        }
+        if (mounted) setState(() => _stats = s);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _persistStats() async {
+    try {
+      final file = await _statsFile();
+      await file.writeAsString(jsonEncode(_stats.toJson()));
+    } catch (_) {}
+  }
+
+  void _clearStats(BuildContext sheetContext) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.surfaceCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Clear all stats?',
+            style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w700, fontSize: 17)),
+        content: Text(
+          'Your session history, streak, and totals will be permanently deleted.',
+          style: TextStyle(color: c.textMuted, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel', style: TextStyle(color: c.textMuted)),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => _stats = _ZenStats());
+              _persistStats();
+              Navigator.pop(ctx);             // close confirm dialog
+              Navigator.pop(sheetContext);    // close info sheet
+            },
+            child: Text('Clear', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Called whenever _handles changes (track added or removed).
+  void _onHandlesUpdated() {
+    if (_handles.isNotEmpty) {
+      if (_playStart == null) {
+        // First track — session starts
+        _playStart = DateTime.now();
+        _stats.sessionsCount++;
+        // Refresh the notification every minute so elapsed time stays current
+        _notifTimer?.cancel();
+        _notifTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+          _showOrUpdateNotification();
+        });
+      }
+      // Show or refresh the notification with the current track list
+      _showOrUpdateNotification();
+    } else if (_handles.isEmpty && _playStart != null) {
+      _notifTimer?.cancel();
+      _notifTimer = null;
+      _recordElapsed();
+      _cancelNotification();
+      if (mounted) setState(() {}); // refresh any stat display
+    }
+  }
+
+  /// Flush elapsed time to stats. Safe to call at any time; no-op if not playing.
+  void _recordElapsed() {
+    if (_playStart == null) return;
+    final secs = DateTime.now().difference(_playStart!).inSeconds;
+    _playStart = null;
+    if (secs < 5) return; // ignore accidental taps
+
+    // Weekly reset guard
+    final monday = _mondayIso();
+    if (_stats.weekStartIso != monday) {
+      _stats.weeklySeconds = 0;
+      _stats.weekStartIso = monday;
+    }
+
+    _stats.totalSeconds  += secs;
+    _stats.weeklySeconds += secs;
+
+    // Streak
+    final today = _todayIso();
+    if (_stats.lastUsedIso != today) {
+      if (_stats.lastUsedIso.isEmpty || _isYesterday(_stats.lastUsedIso, today)) {
+        _stats.currentStreak++;
+      } else {
+        _stats.currentStreak = 1;
+      }
+      _stats.lastUsedIso = today;
+    }
+
+    _persistStats();
   }
 
   void _saveCurrentAsPreset(String name) {
@@ -290,7 +628,34 @@ class _ZenScreenState extends State<ZenScreen> {
     );
   }
 
+  static const _kMaxPresets = 10;
+
   void _showSavePresetDialog(BuildContext context, AppColors c, Color accent) {
+    // Preset limit guard
+    if (_presets.length >= _kMaxPresets) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: c.surfaceCard,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text('Mix limit reached',
+              style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w700, fontSize: 17)),
+          content: Text(
+            'You have $_kMaxPresets saved mixes — the strip gets crowded beyond that. '
+            'Long-press any mix chip to delete one, then save your new mix.',
+            style: TextStyle(color: c.textMuted, fontSize: 14, height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Got it', style: TextStyle(color: accent, fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     final playing = _tracks.where((t) => _handles.containsKey(t.id)).toList();
     final suggestion = playing.length <= 2
         ? playing.map((t) => t.name).join(' + ')
@@ -375,9 +740,11 @@ class _ZenScreenState extends State<ZenScreen> {
         _handles.clear();
         _fadingOut.clear();
       });
+      _onHandlesUpdated(); // ends session if one was active
     } else {
       _handles.clear();
       _fadingOut.clear();
+      // dispose() will call _recordElapsed() before this path
     }
   }
 
@@ -502,7 +869,12 @@ class _ZenScreenState extends State<ZenScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (_) => _ZenInfoSheet(colors: c, accent: accent),
+      builder: (sheetCtx) => _ZenInfoSheet(
+        colors: c,
+        accent: accent,
+        stats: _stats,
+        onClearStats: () => _clearStats(sheetCtx),
+      ),
     );
   }
 
@@ -632,6 +1004,46 @@ class _ZenScreenState extends State<ZenScreen> {
             ),
           ),
 
+          // ── Favourites row ───────────────────────────────────────────────
+          if (_favourites.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 5),
+              child: Row(
+                children: [
+                  Icon(Icons.star_rounded, size: 12, color: accent),
+                  const SizedBox(width: 5),
+                  Text(
+                    'Pinned',
+                    style: TextStyle(
+                      color: c.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 48,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: _tracks
+                    .where((t) => _favourites.contains(t.id) && _available.contains(t.id))
+                    .map((t) => _FavouriteChip(
+                          track: t,
+                          isPlaying: _handles.containsKey(t.id),
+                          accent: accent,
+                          colors: c,
+                          onTap: () => _toggle(t),
+                        ))
+                    .toList(),
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
+
           // ── Presets row ──────────────────────────────────────────────────
           if (_presets.isNotEmpty || _handles.isNotEmpty)
             SizedBox(
@@ -691,6 +1103,8 @@ class _ZenScreenState extends State<ZenScreen> {
                       : null,
                   volume: _volumes[track.id] ?? 50.0,
                   tileIndex: i,
+                  isFavourited: _favourites.contains(track.id),
+                  onToggleFavourite: () => _toggleFavourite(track.id),
                 );
               },
             ),
@@ -721,6 +1135,8 @@ class _ZenTile extends StatefulWidget {
   final VoidCallback? onLongPress;
   final double volume;   // 1–100
   final int tileIndex;
+  final bool isFavourited;
+  final VoidCallback onToggleFavourite;
 
   const _ZenTile({
     required this.track,
@@ -733,6 +1149,8 @@ class _ZenTile extends StatefulWidget {
     required this.onLongPress,
     required this.volume,
     required this.tileIndex,
+    required this.isFavourited,
+    required this.onToggleFavourite,
   });
 
   @override
@@ -803,38 +1221,43 @@ class _ZenTileState extends State<_ZenTile> with SingleTickerProviderStateMixin 
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(widget.track.emoji, style: const TextStyle(fontSize: 36)),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.track.name,
-                    style: TextStyle(
-                      color: dimmed
-                          ? widget.colors.textMuted
-                          : widget.isPlaying
-                              ? widget.accent
-                              : widget.colors.textPrimary,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
+              // Right padding guards description from overlapping the volume badge
+              Padding(
+                padding: EdgeInsets.only(right: widget.isPlaying ? 36.0 : 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.track.name,
+                      style: TextStyle(
+                        color: dimmed
+                            ? widget.colors.textMuted
+                            : widget.isPlaying
+                                ? widget.accent
+                                : widget.colors.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    widget.track.description,
-                    style: TextStyle(color: widget.colors.textMuted, fontSize: 11),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.track.description,
+                      style: TextStyle(color: widget.colors.textMuted, fontSize: 11),
+                      softWrap: true,
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
         ),
 
-        // Loading / playing dot
+        // Loading / playing dot — top-LEFT corner
         if (widget.isLoading)
           Positioned(
-            top: 10, right: 10,
+            top: 10, left: 10,
             child: SizedBox(
               width: 14, height: 14,
               child: CircularProgressIndicator(
@@ -845,12 +1268,34 @@ class _ZenTileState extends State<_ZenTile> with SingleTickerProviderStateMixin 
           )
         else if (widget.isPlaying)
           Positioned(
-            top: 10, right: 10,
+            top: 10, left: 10,
             child: Container(
               width: 8, height: 8,
               decoration: BoxDecoration(
                 color: widget.accent,
                 shape: BoxShape.circle,
+              ),
+            ),
+          ),
+
+        // Star / favourite — top-RIGHT corner, generous tap target
+        if (widget.isAvailable)
+          Positioned(
+            top: 2, right: 2,
+            child: GestureDetector(
+              onTap: widget.onToggleFavourite,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Icon(
+                  widget.isFavourited
+                      ? Icons.star_rounded
+                      : Icons.star_outline_rounded,
+                  size: 18,
+                  color: widget.isFavourited
+                      ? widget.accent
+                      : widget.colors.textMuted.withValues(alpha: 0.40),
+                ),
               ),
             ),
           ),
@@ -1096,7 +1541,13 @@ class _NowPlayingBar extends StatelessWidget {
   }
 }
 
-// Horizontally scrolling marquee for long now-playing labels.
+// Continuous seamless marquee using CustomPainter + Ticker.
+//
+// CustomPainter draws text directly at pixel coordinates — completely bypassing
+// Flutter's width-constraint system, so the full text always renders at its
+// natural width regardless of Expanded/Row constraints.
+// Ticker fires every frame (~60 fps) for perfectly smooth motion.
+// A ValueNotifier drives repaints without rebuilding the widget tree.
 class _MarqueeText extends StatefulWidget {
   final String text;
   final TextStyle style;
@@ -1107,77 +1558,126 @@ class _MarqueeText extends StatefulWidget {
   State<_MarqueeText> createState() => _MarqueeTextState();
 }
 
-class _MarqueeTextState extends State<_MarqueeText> {
-  final ScrollController _sc = ScrollController();
-  bool _running = false;
+class _MarqueeTextState extends State<_MarqueeText>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker;
+  late TextPainter _tp;
+  late double _unitWidth;
+  final ValueNotifier<double> _offset = ValueNotifier(0);
+  Duration _prev = Duration.zero;
+  bool _firstTick = true;
+
+  // Gap between the end of one loop and the start of the next (pixels)
+  static const _kGap = 56.0;
+  // Scroll speed in pixels per second
+  static const _kSpeed = 48.0;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _runLoop());
+    // Initial measure with raw widget.style — context-free, just to ensure
+    // `_tp` is non-null before the ticker fires its first frame.
+    _measure(widget.style);
+    _ticker = createTicker(_onTick)..start();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-measure with the merged DefaultTextStyle so the app's font family
+    // (Outfit via google_fonts) is applied. TextPainter, unlike the Text
+    // widget, does not inherit DefaultTextStyle on its own — this merge is
+    // what makes the marquee match the rest of the UI.
+    _measure(DefaultTextStyle.of(context).style.merge(widget.style));
+  }
+
+  void _measure(TextStyle effectiveStyle) {
+    _tp = TextPainter(
+      text: TextSpan(text: widget.text, style: effectiveStyle),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    _unitWidth = _tp.width + _kGap;
+    _offset.value = 0;
+    _prev = Duration.zero;
+    _firstTick = true;
+  }
+
+  void _onTick(Duration elapsed) {
+    if (!mounted) return;
+    // Skip the first tick to establish a valid _prev reference
+    if (_firstTick) { _firstTick = false; _prev = elapsed; return; }
+    final dt = (elapsed - _prev).inMicroseconds / 1e6;
+    _prev = elapsed;
+    _offset.value = (_offset.value + _kSpeed * dt) % _unitWidth;
   }
 
   @override
   void didUpdateWidget(_MarqueeText old) {
     super.didUpdateWidget(old);
-    if (old.text != widget.text) {
-      // Text changed — jump back to start and let the loop restart naturally
-      if (_sc.hasClients) _sc.jumpTo(0);
+    if (old.text != widget.text || old.style != widget.style) {
+      _measure(DefaultTextStyle.of(context).style.merge(widget.style));
     }
-  }
-
-  Future<void> _runLoop() async {
-    if (_running) return;
-    _running = true;
-    // Initial pause so the user can read the start of the label
-    await Future.delayed(const Duration(milliseconds: 1200));
-    while (mounted) {
-      if (!_sc.hasClients) {
-        await Future.delayed(const Duration(milliseconds: 100));
-        continue;
-      }
-      final maxExtent = _sc.position.maxScrollExtent;
-      if (maxExtent <= 0) {
-        // Text fits — no need to scroll; check again if text changes
-        await Future.delayed(const Duration(milliseconds: 300));
-        continue;
-      }
-      // Scroll to end at a comfortable reading pace (~55 px/s)
-      final ms = (maxExtent / 55 * 1000).round();
-      await _sc.animateTo(
-        maxExtent,
-        duration: Duration(milliseconds: ms),
-        curve: Curves.linear,
-      );
-      if (!mounted) break;
-      // Pause at end
-      await Future.delayed(const Duration(milliseconds: 900));
-      if (!mounted) break;
-      // Snap back to start
-      _sc.jumpTo(0);
-      // Pause at start before next scroll
-      await Future.delayed(const Duration(milliseconds: 1000));
-    }
-    _running = false;
   }
 
   @override
   void dispose() {
-    _sc.dispose();
+    _ticker.dispose();
+    _offset.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ClipRect(
-      child: SingleChildScrollView(
-        controller: _sc,
-        scrollDirection: Axis.horizontal,
-        physics: const NeverScrollableScrollPhysics(),
-        child: Text(widget.text, style: widget.style, maxLines: 1),
-      ),
-    );
+    // LayoutBuilder reads the exact available width from Expanded so we can
+    // pass a concrete Size to CustomPaint — avoids relying on constraint
+    // clamping of Size.zero and prevents any ambiguity about the canvas size.
+    return LayoutBuilder(builder: (context, constraints) {
+      final w = constraints.maxWidth == double.infinity ? 300.0 : constraints.maxWidth;
+      return SizedBox(
+        width: w,
+        height: _tp.height,
+        child: ClipRect(
+          child: CustomPaint(
+            size: Size(w, _tp.height),
+            painter: _MarqueePainter(
+              tp: _tp,
+              offset: _offset,
+              unitWidth: _unitWidth,
+            ),
+          ),
+        ),
+      );
+    });
   }
+}
+
+// Repaints whenever _offset changes (via ValueNotifier repaint hook).
+// No widget rebuilds needed — just direct canvas draws each frame.
+class _MarqueePainter extends CustomPainter {
+  final TextPainter tp;
+  final ValueNotifier<double> offset;
+  final double unitWidth;
+
+  _MarqueePainter({
+    required this.tp,
+    required this.offset,
+    required this.unitWidth,
+  }) : super(repaint: offset);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final o = offset.value;
+    final y = (size.height - tp.height) / 2;
+    // First copy: slides left as o increases
+    tp.paint(canvas, Offset(-o, y));
+    // Second copy: exactly one unit-width to the right — slides in seamlessly
+    tp.paint(canvas, Offset(unitWidth - o, y));
+  }
+
+  @override
+  bool shouldRepaint(_MarqueePainter old) =>
+      old.tp != tp || old.unitWidth != unitWidth;
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,8 +1686,15 @@ class _MarqueeTextState extends State<_MarqueeText> {
 class _ZenInfoSheet extends StatelessWidget {
   final AppColors colors;
   final Color accent;
+  final _ZenStats stats;
+  final VoidCallback onClearStats;
 
-  const _ZenInfoSheet({required this.colors, required this.accent});
+  const _ZenInfoSheet({
+    required this.colors,
+    required this.accent,
+    required this.stats,
+    required this.onClearStats,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1235,6 +1742,17 @@ class _ZenInfoSheet extends StatelessWidget {
                 ],
               ),
             ],
+          ),
+          const SizedBox(height: 16),
+
+          // ── Stats card ────────────────────────────────────────────────
+          _ZenStatsCard(
+            stats: stats,
+            colors: colors,
+            accent: accent,
+            onReset: (stats.totalSeconds > 0 || stats.sessionsCount > 0)
+                ? onClearStats
+                : null,
           ),
           const SizedBox(height: 16),
 
@@ -1415,6 +1933,198 @@ class _PresetChip extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Favourite chip — compact tile in the pinned row
+// ---------------------------------------------------------------------------
+class _FavouriteChip extends StatelessWidget {
+  final _ZenTrack track;
+  final bool isPlaying;
+  final Color accent;
+  final AppColors colors;
+  final VoidCallback onTap;
+
+  const _FavouriteChip({
+    required this.track,
+    required this.isPlaying,
+    required this.accent,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+        decoration: BoxDecoration(
+          color: isPlaying ? accent.withValues(alpha: 0.12) : colors.surfaceElevated,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isPlaying ? accent.withValues(alpha: 0.55) : colors.border,
+            width: isPlaying ? 1.5 : 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(track.emoji, style: const TextStyle(fontSize: 17)),
+            const SizedBox(width: 6),
+            Text(
+              track.name,
+              style: TextStyle(
+                color: isPlaying ? accent : colors.textSecondary,
+                fontSize: 12,
+                fontWeight: isPlaying ? FontWeight.w600 : FontWeight.w500,
+              ),
+            ),
+            if (isPlaying) ...[
+              const SizedBox(width: 6),
+              Container(
+                width: 5, height: 5,
+                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stats card shown inside the info sheet
+// ---------------------------------------------------------------------------
+class _ZenStatsCard extends StatelessWidget {
+  final _ZenStats stats;
+  final AppColors colors;
+  final Color accent;
+  final VoidCallback? onReset; // null → no reset button shown
+
+  const _ZenStatsCard({
+    required this.stats,
+    required this.colors,
+    required this.accent,
+    this.onReset,
+  });
+
+  static String _fmt(int seconds) {
+    if (seconds < 60) return '< 1 min';
+    final m = seconds ~/ 60;
+    if (m < 60) return '$m min';
+    final h = m ~/ 60;
+    final rm = m % 60;
+    return rm == 0 ? '${h}h' : '${h}h ${rm}m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasData = stats.totalSeconds > 0 || stats.sessionsCount > 0;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surfaceElevated,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: hasData
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    _StatCell(label: 'This week',  value: _fmt(stats.weeklySeconds), emoji: '⏱', colors: colors, accent: accent),
+                    _StatCell(label: 'All time',   value: _fmt(stats.totalSeconds),  emoji: '📅', colors: colors, accent: accent),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    _StatCell(label: 'Sessions',   value: stats.sessionsCount.toString(), emoji: '🎵', colors: colors, accent: accent),
+                    _StatCell(
+                      label: 'Streak',
+                      value: stats.currentStreak == 0 ? '—' : '${stats.currentStreak}d',
+                      emoji: '🔥',
+                      colors: colors,
+                      accent: accent,
+                    ),
+                  ],
+                ),
+                if (onReset != null) ...[
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.bottomRight,
+                    child: GestureDetector(
+                      onTap: onReset,
+                      child: const Text(
+                        'Reset',
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            )
+          : Row(
+              children: [
+                Icon(Icons.bar_chart_rounded, size: 16, color: colors.textMuted),
+                const SizedBox(width: 8),
+                Text(
+                  'Start listening to see your stats here.',
+                  style: TextStyle(color: colors.textMuted, fontSize: 13),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _StatCell extends StatelessWidget {
+  final String label;
+  final String value;
+  final String emoji;
+  final AppColors colors;
+  final Color accent;
+
+  const _StatCell({
+    required this.label,
+    required this.value,
+    required this.emoji,
+    required this.colors,
+    required this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$emoji  $label',
+            style: TextStyle(color: colors.textMuted, fontSize: 11, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: colors.textPrimary,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
       ),
     );
   }

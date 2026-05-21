@@ -18,6 +18,11 @@ import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/sound_button.dart';
 import 'clip_editor_screen.dart';
+import 'decibel_screen.dart';
+import 'metronome_screen.dart';
+import 'spectrum_screen.dart';
+import 'voice_memo_screen.dart';
+import 'hearing_check_screen.dart';
 import 'morse_screen.dart';
 import 'morse_soundr_screen.dart';
 import 'morse_tapper_quiz_screen.dart';
@@ -1757,6 +1762,8 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                       label: 'Morse Tapper Quiz Game',
                       onTap: () => nav(MorseTapperQuizScreen(
                         dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+                        correctSource: _preloaded['s45'],  // UI Success Chime
+                        wrongSource: _preloaded['s44'],    // UI Click Soft
                       )),
                     ),
 
@@ -1783,6 +1790,34 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                       icon: Icons.self_improvement_rounded,
                       label: 'Zen Mode',
                       onTap: () => nav(const ZenScreen()),
+                    ),
+
+                    // ── Tools ────────────────────────────────────────────────
+                    _DrawerSectionLabel('TOOLS'),
+                    _DrawerItem(
+                      icon: Icons.graphic_eq_rounded,
+                      label: 'Decibel Meter',
+                      onTap: () => nav(const DecibelScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.timer_rounded,
+                      label: 'Metronome',
+                      onTap: () => nav(const MetronomeScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.equalizer_rounded,
+                      label: 'Spectrum Analyser',
+                      onTap: () => nav(const SpectrumScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.mic_outlined,
+                      label: 'Voice Memo',
+                      onTap: () => nav(const VoiceMemoScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.hearing_rounded,
+                      label: 'Hearing Check',
+                      onTap: () => nav(const HearingCheckScreen()),
                     ),
 
                     // ── Sound Games ──────────────────────────────────────────

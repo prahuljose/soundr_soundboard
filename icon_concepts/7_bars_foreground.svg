@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bar7" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#c4b5fd"/>
+      <stop offset="100%" style="stop-color:#6C63FF"/>
+    </linearGradient>
+    <linearGradient id="sGrad7" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#e0d9ff"/>
+      <stop offset="100%" style="stop-color:#a78bfa"/>
+    </linearGradient>
+    <filter id="glow7">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="sGlow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- No background — transparent for adaptive icon foreground layer -->
+
+  <!-- Equalizer bars -->
+  <g transform="translate(256,196)" filter="url(#glow7)">
+    <rect x="-135" y="-22"  width="15" height="44"  rx="7.5" fill="url(#bar7)" opacity="0.50"/>
+    <rect x="-108" y="-36"  width="15" height="72"  rx="7.5" fill="url(#bar7)" opacity="0.62"/>
+    <rect x="-81"  y="-56"  width="15" height="112" rx="7.5" fill="url(#bar7)" opacity="0.74"/>
+    <rect x="-54"  y="-76"  width="15" height="152" rx="7.5" fill="url(#bar7)" opacity="0.84"/>
+    <rect x="-27"  y="-92"  width="15" height="184" rx="7.5" fill="url(#bar7)" opacity="0.92"/>
+    <rect x="0"    y="-102" width="15" height="204" rx="7.5" fill="url(#bar7)"/>
+    <rect x="27"   y="-92"  width="15" height="184" rx="7.5" fill="url(#bar7)" opacity="0.92"/>
+    <rect x="54"   y="-76"  width="15" height="152" rx="7.5" fill="url(#bar7)" opacity="0.84"/>
+    <rect x="81"   y="-56"  width="15" height="112" rx="7.5" fill="url(#bar7)" opacity="0.74"/>
+    <rect x="108"  y="-36"  width="15" height="72"  rx="7.5" fill="url(#bar7)" opacity="0.62"/>
+    <rect x="135"  y="-22"  width="15" height="44"  rx="7.5" fill="url(#bar7)" opacity="0.50"/>
+  </g>
+
+  <!-- Separator -->
+  <line x1="120" y1="332" x2="392" y2="332" stroke="#6C63FF" stroke-width="1" opacity="0.30"/>
+
+  <!-- Soundr wordmark -->
+  <text
+    x="256" y="430"
+    text-anchor="middle"
+    font-family="'SF Pro Display','Helvetica Neue',Arial,sans-serif"
+    font-weight="800"
+    font-size="82"
+    fill="url(#sGrad7)"
+    filter="url(#sGlow)"
+    letter-spacing="2">Soundr</text>
+</svg>

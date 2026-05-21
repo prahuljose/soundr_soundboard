@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <defs>
+    <!-- Vivid top-to-bottom bar gradient -->
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   style="stop-color:#f0e6ff"/>
+      <stop offset="40%"  style="stop-color:#c4b5fd"/>
+      <stop offset="100%" style="stop-color:#6d28d9"/>
+    </linearGradient>
+    <!-- Soft glow behind bars -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!--
+    Adaptive icon safe zone at 4× (xxxhdpi):
+      Layer = 432 px (108 dp × 4)
+      Safe zone = 264 px (66 dp × 4), centered → margins of 84 px each side
+      Safe region: x 84–348, y 84–348
+
+    7 bars, bar w=24 px, gap=12 px → total span = 7×24 + 6×12 = 240 px
+    Centre x = 216  →  left edge = 216−120 = 96 px  ✓ (≥84)
+                        right edge = 216+120 = 336 px ✓ (≤348)
+
+    Bar heights (half-heights from centre y=210):
+      outer   40 px half → top 170, bot 250
+      mid     65 px half → top 145, bot 275
+      inner   90 px half → top 120, bot 300
+      centre 110 px half → top 100, bot 320
+    All within 84–348 ✓
+  -->
+  <g transform="translate(216,210)" filter="url(#glow)">
+    <!-- outer left -->
+    <rect x="-120" y="-40"  width="24" height="80"  rx="12" fill="url(#barGrad)"/>
+    <!-- mid-outer left -->
+    <rect x="-84"  y="-65"  width="24" height="130" rx="12" fill="url(#barGrad)"/>
+    <!-- inner left -->
+    <rect x="-48"  y="-90"  width="24" height="180" rx="12" fill="url(#barGrad)"/>
+    <!-- centre -->
+    <rect x="-12"  y="-110" width="24" height="220" rx="12" fill="url(#barGrad)"/>
+    <!-- inner right -->
+    <rect x="24"   y="-90"  width="24" height="180" rx="12" fill="url(#barGrad)"/>
+    <!-- mid-outer right -->
+    <rect x="60"   y="-65"  width="24" height="130" rx="12" fill="url(#barGrad)"/>
+    <!-- outer right -->
+    <rect x="96"   y="-40"  width="24" height="80"  rx="12" fill="url(#barGrad)"/>
+  </g>
+</svg>

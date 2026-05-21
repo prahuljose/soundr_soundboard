@@ -75,7 +75,7 @@ class _SoundrAppState extends State<SoundrApp> {
       builder: (context, mode, _) => ValueListenableBuilder<Color>(
         valueListenable: _accentNotifier,
         builder: (context, accent, child) => MaterialApp(
-          title: 'Soundr',
+          title: 'Soundr Soundboard',
           debugShowCheckedModeBanner: false,
           theme: _buildTheme(Brightness.light),
           darkTheme: _buildTheme(Brightness.dark),

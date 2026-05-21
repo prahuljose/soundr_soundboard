@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 432" width="432" height="432">
+  <defs>
+    <!--
+      Bright gradient that stays vivid from top to bottom.
+      Avoids dark purple at the bottom (which blended into #1a1040 bg).
+    -->
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   style="stop-color:#ffffff;stop-opacity:1"/>
+      <stop offset="35%"  style="stop-color:#ddd6fe"/>
+      <stop offset="100%" style="stop-color:#a78bfa"/>
+    </linearGradient>
+
+    <!-- Soft glow — keeps the bars punchy on the dark bg -->
+    <filter id="glow" x="-40%" y="-20%" width="180%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!--
+    Adaptive icon safe zone at 4× (xxxhdpi):
+      Full layer = 432 px   (108 dp × 4)
+      Safe zone  = 264 px   (66 dp × 4), centred → 84 px margin each side
+      Safe region: x 84–348, y 84–348
+
+    5 bars:  bar-width=20 px, gap=26 px
+      total span = 5×20 + 4×26 = 204 px
+      centre x = 216  →  left = 216−102 = 114 ✓  right = 216+102 = 318 ✓
+
+    Heights (half from centre y = 205):
+      outer  55 px  →  top 150, bot 260  ✓
+      inner  85 px  →  top 120, bot 290  ✓
+      centre110 px  →  top  95, bot 315  ✓  (all within 84–348)
+  -->
+  <g transform="translate(216,205)" filter="url(#glow)">
+    <!-- outer left -->
+    <rect x="-102" y="-55"  width="20" height="110" rx="10" fill="url(#barGrad)"/>
+    <!-- inner left -->
+    <rect x="-56"  y="-85"  width="20" height="170" rx="10" fill="url(#barGrad)"/>
+    <!-- centre — tallest -->
+    <rect x="-10"  y="-110" width="20" height="220" rx="10" fill="url(#barGrad)"/>
+    <!-- inner right -->
+    <rect x="36"   y="-85"  width="20" height="170" rx="10" fill="url(#barGrad)"/>
+    <!-- outer right -->
+    <rect x="82"   y="-55"  width="20" height="110" rx="10" fill="url(#barGrad)"/>
+  </g>
+</svg>

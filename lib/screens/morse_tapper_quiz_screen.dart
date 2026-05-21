@@ -10,7 +10,15 @@ enum _Phase { waiting, tapping, result }
 class MorseTapperQuizScreen extends StatefulWidget {
   final AudioSource? dotSource;
   final AudioSource? dashSource;
-  const MorseTapperQuizScreen({super.key, this.dotSource, this.dashSource});
+  final AudioSource? correctSource;
+  final AudioSource? wrongSource;
+  const MorseTapperQuizScreen({
+    super.key,
+    this.dotSource,
+    this.dashSource,
+    this.correctSource,
+    this.wrongSource,
+  });
 
   @override
   State<MorseTapperQuizScreen> createState() => _MorseTapperQuizScreenState();
@@ -134,6 +142,16 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
       }
     });
     HapticFeedback.mediumImpact();
+    _playResultSound(correct);
+  }
+
+  void _playResultSound(bool correct) {
+    if (_isMuted) return;
+    final source = correct ? widget.correctSource : widget.wrongSource;
+    if (source == null) return;
+    try {
+      SoLoud.instance.play(source);
+    } catch (_) {}
   }
 
   void _playSymbol(bool isDash) {
