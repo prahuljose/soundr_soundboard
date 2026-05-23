@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'screens/soundboard_screen.dart';
 import 'theme/app_colors.dart';
 
@@ -27,9 +26,13 @@ class _SoundrAppState extends State<SoundrApp> {
       ),
       useMaterial3: true,
       scaffoldBackgroundColor: c.scaffoldBg,
-      textTheme: GoogleFonts.outfitTextTheme(
-        ThemeData(brightness: brightness).textTheme,
-      ),
+      // Bundled Outfit font (variable). The 'Outfit' family is declared in
+      // pubspec.yaml under flutter.fonts, so this resolves locally — no
+      // runtime download, works fully offline.
+      fontFamily: 'Outfit',
+      textTheme: ThemeData(brightness: brightness)
+          .textTheme
+          .apply(fontFamily: 'Outfit'),
       appBarTheme: AppBarTheme(
         backgroundColor: c.scaffoldBg,
         foregroundColor: c.textPrimary,

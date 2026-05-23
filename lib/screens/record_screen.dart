@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_handler/permission_handler.dart';
 import '../theme/app_colors.dart';
+import '../widgets/permission_denied_card.dart';
 import 'clip_editor_screen.dart';
 
 enum _RecordState { idle, recording, processing, stopped }
@@ -32,6 +33,7 @@ class _RecordScreenState extends State<RecordScreen> {
   String? _wavPath;
   Duration _elapsed = Duration.zero;
   Timer? _elapsedTimer;
+  PermissionStatus? _micDenied;
 
   // Rolling amplitude history — oldest at index 0, newest at end
   final List<double> _ampHistory = List.filled(_kBarCount, 0.0, growable: true);
@@ -52,11 +54,10 @@ class _RecordScreenState extends State<RecordScreen> {
     final status = await Permission.microphone.request();
     if (!mounted) return;
     if (!status.isGranted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Microphone permission is required')),
-      );
+      setState(() => _micDenied = status);
       return;
     }
+    setState(() => _micDenied = null);
 
     final dir = await getApplicationDocumentsDirectory();
     final clipsDir = Directory(p.join(dir.path, 'clips'));
@@ -221,7 +222,24 @@ class _RecordScreenState extends State<RecordScreen> {
                   : _discard,
         ),
       ),
-      body: Column(
+      body: _micDenied != null
+          ? Padding(
+              padding: const EdgeInsets.all(24),
+              child: Center(
+                child: PermissionDeniedCard(
+                  permission: Permission.microphone,
+                  icon: Icons.mic_rounded,
+                  permissionLabel: 'Microphone',
+                  purpose:
+                      'Recording a custom clip needs microphone access. '
+                      'Clips are saved on this device only.',
+                  onGranted: () {
+                    if (mounted) setState(() => _micDenied = null);
+                  },
+                ),
+              ),
+            )
+          : Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           const Spacer(flex: 2),

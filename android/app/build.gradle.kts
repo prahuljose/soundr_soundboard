@@ -61,6 +61,17 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // Disable R8 minify entirely — it was stripping FFI / reflection
+            // classes from flutter_soloud and flutter_local_notifications,
+            // causing init() to hang on release builds. If we ever want to
+            // re-enable shrinking, set isMinifyEnabled = true AND make sure
+            // proguard-rules.pro covers every plugin in the dependency tree.
+            isMinifyEnabled = false
+            isShrinkResources = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }

@@ -14,6 +14,7 @@ import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../theme/app_colors.dart';
+import '../widgets/permission_denied_card.dart';
 
 // ── Data model ───────────────────────────────────────────────────────────────
 
@@ -69,6 +70,9 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
   bool _processing = false;
   Duration _elapsed = Duration.zero;
   Timer? _elapsedTimer;
+  // When non-null, the recording-controls card is replaced with the
+  // permission-denied card. Memo list below stays accessible.
+  PermissionStatus? _micDenied;
 
   List<double> _ampHistory = List.filled(30, 0.0);
 
@@ -164,13 +168,10 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
   Future<void> _startRecording() async {
     final status = await Permission.microphone.request();
     if (!status.isGranted) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Microphone permission denied')),
-        );
-      }
+      if (mounted) setState(() => _micDenied = status);
       return;
     }
+    if (mounted) setState(() => _micDenied = null);
 
     if (!await _memosDir.exists()) {
       await _memosDir.create(recursive: true);
@@ -405,10 +406,22 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Recording card
+            // Recording card — replaced by permission denial UI when needed.
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: _buildRecordingCard(c, accent),
+              child: _micDenied != null
+                  ? PermissionDeniedCard(
+                      permission: Permission.microphone,
+                      icon: Icons.mic_rounded,
+                      permissionLabel: 'Microphone',
+                      purpose:
+                          'Voice memos are recorded using your microphone and saved on this device only. '
+                          'Nothing is uploaded or shared automatically.',
+                      onGranted: () {
+                        if (mounted) setState(() => _micDenied = null);
+                      },
+                    )
+                  : _buildRecordingCard(c, accent),
             ),
             // Memo list
             Expanded(

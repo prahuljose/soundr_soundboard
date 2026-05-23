@@ -12,6 +12,7 @@ import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../theme/app_colors.dart';
+import '../widgets/permission_denied_card.dart';
 
 // ── Audio config ────────────────────────────────────────────────────────────
 const _kSampleRate = 44100;
@@ -236,6 +237,9 @@ class _DecibelScreenState extends State<DecibelScreen> {
 
   bool _running = false;
   String? _error;
+  // When non-null, the body renders the permission-denied card instead of
+  // the meter. Set when mic permission is denied; cleared on grant.
+  PermissionStatus? _micDenied;
 
   // Bin accumulator
   double _binSumSq = 0;
@@ -316,9 +320,13 @@ class _DecibelScreenState extends State<DecibelScreen> {
     final status = await Permission.microphone.request();
     if (!mounted) return;
     if (!status.isGranted) {
-      setState(() => _error = 'Microphone permission denied');
+      setState(() {
+        _micDenied = status;
+        _error = null;
+      });
       return;
     }
+    setState(() => _micDenied = null);
 
     try {
       final stream = await _recorder.startStream(
@@ -650,7 +658,24 @@ class _DecibelScreenState extends State<DecibelScreen> {
         ],
       ),
       body: SafeArea(
-        child: Column(
+        child: _micDenied != null
+            ? Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: PermissionDeniedCard(
+                    permission: Permission.microphone,
+                    icon: Icons.mic_rounded,
+                    permissionLabel: 'Microphone',
+                    purpose:
+                        'The decibel meter measures sound levels using your microphone. '
+                        'Audio is processed locally — no recording is saved or transmitted.',
+                    onGranted: () {
+                      if (mounted) setState(() => _micDenied = null);
+                    },
+                  ),
+                ),
+              )
+            : Column(
           children: [
             Expanded(
               child: SingleChildScrollView(

@@ -8,6 +8,11 @@
          the Play Console permission list minimal. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"
         tools:node="remove"/>
+    <!-- ExoPlayer (transitive of flutter_local_notifications) declares
+         ACCESS_NETWORK_STATE for media streaming. We don't stream — strip it
+         to keep the app fully offline and the privacy policy accurate. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"
+        tools:node="remove"/>
     <application
         android:label="Soundr Soundboard"
         android:name="${applicationName}"

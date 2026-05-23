@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
 import '../theme/app_colors.dart';
+import '../widgets/permission_denied_card.dart';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const _kSampleRate = 44100;
@@ -73,6 +74,7 @@ class _SpectrumScreenState extends State<SpectrumScreen> {
   StreamSubscription<Uint8List>? _streamSub;
   bool _running = false;
   String? _error;
+  PermissionStatus? _micDenied;
 
   final List<double> _sampleBuf = [];
   final List<double> _bands = List.filled(_kNumBands, 0.0);
@@ -93,9 +95,13 @@ class _SpectrumScreenState extends State<SpectrumScreen> {
     final status = await Permission.microphone.request();
     if (!mounted) return;
     if (!status.isGranted) {
-      setState(() => _error = 'Microphone permission denied');
+      setState(() {
+        _micDenied = status;
+        _error = null;
+      });
       return;
     }
+    setState(() => _micDenied = null);
 
     try {
       final stream = await _recorder.startStream(
@@ -225,7 +231,24 @@ class _SpectrumScreenState extends State<SpectrumScreen> {
         elevation: 0,
       ),
       body: SafeArea(
-        child: Column(
+        child: _micDenied != null
+            ? Padding(
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: PermissionDeniedCard(
+                    permission: Permission.microphone,
+                    icon: Icons.equalizer_rounded,
+                    permissionLabel: 'Microphone',
+                    purpose:
+                        'The spectrum analyser visualises sound from your microphone in real time. '
+                        'Audio is processed locally — nothing is recorded or transmitted.',
+                    onGranted: () {
+                      if (mounted) setState(() => _micDenied = null);
+                    },
+                  ),
+                ),
+              )
+            : Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // ── Spectrum card ────────────────────────────────────────────

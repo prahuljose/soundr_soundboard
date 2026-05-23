@@ -10,6 +10,7 @@ import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter/foundation.dart' show consolidateHttpClientResponseBytes;
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../data/sounds_data.dart';
 import '../models/scene_model.dart';
 import '../models/sound_model.dart';
@@ -54,6 +55,12 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   String? _stopOnTapExcludeId;
   int _loadedCount = 0;
   int _totalCount = 0;
+  String _initStatus = 'Starting'; // visible on the loading screen for diagnostics
+  String? _initError;
+  // Notification permission tracking. We tell the user about the playback
+  // notification once per app session if they've denied it, then stop nagging.
+  bool _notificationsGranted = true;
+  bool _notificationHintShown = false;
 
   // Stop-on-tap
   bool _stopOnTap = false;
@@ -142,19 +149,68 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     } catch (_) {}
   }
 
+  void _setStatus(String s) {
+    if (mounted) setState(() => _initStatus = s);
+  }
+
   Future<void> _init() async {
-    await NotificationService.init();
-    await NotificationService.requestPermission();
+    // Notification setup — non-critical. Time-bound so a hang here can never
+    // block the rest of startup. requestPermission() can take a while if the
+    // OS dialog is shown, hence a longer timeout.
+    _setStatus('Setting up notifications');
+    try {
+      await NotificationService.init().timeout(const Duration(seconds: 5));
+    } catch (_) {/* non-fatal */}
+    try {
+      await NotificationService.requestPermission()
+          .timeout(const Duration(seconds: 60));
+    } catch (_) {/* non-fatal — user can grant from settings later */}
+    // Cache the granted state so we can show a one-time hint on first play
+    // if the playback notification will be silently suppressed.
+    try {
+      final notifStatus = await Permission.notification.status;
+      _notificationsGranted = notifStatus.isGranted;
+    } catch (_) {
+      _notificationsGranted = true; // assume best case on older Android
+    }
     NotificationService.setStopCallback(_stopAll);
     NotificationService.setPlayCallback(_playById);
-    await SoLoud.instance.init();
-    await _loadUserClips();
+
+    // Audio engine — critical. If this fails the app is unusable, so we
+    // surface the error to the loading screen instead of hanging.
+    _setStatus('Starting audio engine');
+    try {
+      await SoLoud.instance.init().timeout(const Duration(seconds: 15));
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _initError = 'Audio engine failed to start. Please reinstall.\n\n$e';
+        });
+      }
+      return;
+    }
+
+    _setStatus('Loading saved clips');
+    try {
+      await _loadUserClips().timeout(const Duration(seconds: 10));
+    } catch (_) {/* non-fatal — empty clip list */}
+
     final sounds = _allSounds;
-    if (mounted) setState(() { _totalCount = sounds.length; _loadedCount = 0; });
+    if (mounted) {
+      setState(() {
+        _totalCount = sounds.length;
+        _loadedCount = 0;
+      });
+    }
     await _preloadAll(sounds);
-    _favorites = await ClipRepository.getFavorites();
-    _playCounts = await ClipRepository.getPlayCounts();
-    await _loadScenes();
+
+    _setStatus('Loading favorites');
+    try {
+      _favorites = await ClipRepository.getFavorites();
+      _playCounts = await ClipRepository.getPlayCounts();
+      await _loadScenes();
+    } catch (_) {/* non-fatal */}
+
     if (mounted) setState(() => _ready = true);
   }
 
@@ -206,6 +262,60 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     super.dispose();
   }
 
+  // ── Notification permission hint ──────────────────────────────────────────
+
+  /// Shown once per app session on first sound play if notifications are
+  /// denied. Non-blocking — sounds keep working, this just explains why the
+  /// playback controls aren't in the notification shade and offers a fix.
+  void _showNotificationHint() {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final accent = Theme.of(context).colorScheme.primary;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          backgroundColor: c.surfaceCard,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 7),
+          margin: const EdgeInsets.all(12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: c.border),
+          ),
+          content: Row(
+            children: [
+              Icon(Icons.notifications_off_rounded,
+                  color: c.textSecondary, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Enable notifications to control playback from the shade.',
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          action: SnackBarAction(
+            label: 'Settings',
+            textColor: accent,
+            onPressed: () async {
+              await openAppSettings();
+              // When user returns, re-check so we don't nag again.
+              try {
+                final s = await Permission.notification.status;
+                if (mounted) {
+                  setState(() => _notificationsGranted = s.isGranted);
+                }
+              } catch (_) {}
+            },
+          ),
+        ),
+      );
+  }
+
   // ── Playback ──────────────────────────────────────────────────────────────
 
   Future<void> _play(SoundModel sound) async {
@@ -241,11 +351,18 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
         .map((s) => (id: s.id, name: s.name))
         .toList();
 
-    // Show notification
+    // Show notification (silently no-ops if permission was denied)
     NotificationService.showPlayingNotification(
       sound.name,
       quickPlays: quickPlays,
     );
+
+    // First-play tip: if the user denied notifications, let them know what
+    // they're missing — just once per session, dismissible.
+    if (!_notificationsGranted && !_notificationHintShown && mounted) {
+      _notificationHintShown = true;
+      _showNotificationHint();
+    }
 
     final handle = await SoLoud.instance.play(source);
     _activeHandles.add(handle);
@@ -1882,6 +1999,74 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               ),
             ),
 
+            // Notifications — permanent way to fix denial after the
+            // one-time SnackBar has been dismissed. Always tappable so users
+            // can also tweak channel settings even when granted.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(10),
+                onTap: () async {
+                  Navigator.pop(context); // close drawer
+                  await openAppSettings();
+                  // When user returns, re-check so the row reflects reality
+                  // and the one-time hint flag resets if newly enabled.
+                  try {
+                    final s = await Permission.notification.status;
+                    if (mounted) {
+                      setState(() {
+                        _notificationsGranted = s.isGranted;
+                        if (s.isGranted) _notificationHintShown = false;
+                      });
+                    }
+                  } catch (_) {}
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  child: Row(children: [
+                    Icon(
+                      _notificationsGranted
+                          ? Icons.notifications_active_rounded
+                          : Icons.notifications_off_rounded,
+                      size: 20,
+                      color: _notificationsGranted
+                          ? c.iconSecondary
+                          : Colors.redAccent.withValues(alpha: 0.85),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Notifications',
+                            style: TextStyle(
+                              color: c.textSecondary, fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _notificationsGranted
+                                ? 'Enabled'
+                                : 'Disabled — tap to enable',
+                            style: TextStyle(
+                              color: _notificationsGranted
+                                  ? c.textMuted
+                                  : Colors.redAccent.withValues(alpha: 0.85),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right_rounded,
+                        size: 20, color: c.iconSecondary),
+                  ]),
+                ),
+              ),
+            ),
+
             // Accent colour
             Padding(
               padding: const EdgeInsets.fromLTRB(26, 6, 20, 4),
@@ -1935,6 +2120,8 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   Widget _buildLoadingScreen() => _SplashScreen(
         loadedCount: _loadedCount,
         totalCount: _totalCount,
+        statusText: _initStatus,
+        errorText: _initError,
       );
 
   PreferredSizeWidget _buildAppBar() {
@@ -2836,7 +3023,14 @@ class _DrawerSectionLabel extends StatelessWidget {
 class _SplashScreen extends StatefulWidget {
   final int loadedCount;
   final int totalCount;
-  const _SplashScreen({required this.loadedCount, required this.totalCount});
+  final String statusText;
+  final String? errorText;
+  const _SplashScreen({
+    required this.loadedCount,
+    required this.totalCount,
+    required this.statusText,
+    this.errorText,
+  });
 
   @override
   State<_SplashScreen> createState() => _SplashScreenState();
@@ -2969,13 +3163,28 @@ class _SplashScreenState extends State<_SplashScreen>
                 Text(
                   widget.totalCount > 0
                       ? '${widget.loadedCount} / ${widget.totalCount} sounds'
-                      : 'Starting up...',
+                      : widget.statusText,
                   style: TextStyle(
                     color: Colors.white.withAlpha(35),
                     fontSize: 12,
                     letterSpacing: 0.3,
                   ),
                 ),
+                if (widget.errorText != null) ...[
+                  const SizedBox(height: 18),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 36),
+                    child: Text(
+                      widget.errorText!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFFFF6B6B),
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

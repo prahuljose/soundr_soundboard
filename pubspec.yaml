@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.0.5+6
 
 environment:
   sdk: ^3.11.3
@@ -41,7 +41,6 @@ dependencies:
   record: ^5.1.2
   share_plus: ^10.0.0
   file_picker: ^8.0.0
-  google_fonts: ^6.2.1
   flutter_local_notifications: ^18.0.1
   device_info_plus: ^11.0.0
 
@@ -74,6 +73,13 @@ flutter:
   assets:
    - assets/sounds/raw/
    - assets/sounds/zen/
+
+  # Bundled fonts — Outfit (variable). One file covers all weights 100–900,
+  # selected at runtime via TextStyle's fontWeight. No runtime download.
+  fonts:
+    - family: Outfit
+      fonts:
+        - asset: assets/fonts/Outfit-VariableFont.ttf
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
