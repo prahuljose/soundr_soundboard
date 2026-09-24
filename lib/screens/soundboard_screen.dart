@@ -19,6 +19,7 @@ import '../services/clip_repository.dart';
 import '../services/haptics.dart';
 import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/share_card.dart' show soundrPlayStoreUrl;
 import '../widgets/sound_button.dart';
 import 'clip_editor_screen.dart';
 import 'decibel_screen.dart';
@@ -1568,11 +1569,8 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     await Share.shareXFiles([XFile(clip.filePath!)], text: _shareText(clip));
   }
 
-  static const _playStoreUrl =
-      'https://play.google.com/store/apps/details?id=com.soundr.app';
-
   String _shareText(SoundModel sound) =>
-      '${sound.emoji} ${sound.name} — sent from Soundr\n$_playStoreUrl';
+      '${sound.emoji} ${sound.name} — sent from Soundr\n$soundrPlayStoreUrl';
 
   /// Shares a built-in sound as an audio file. Assets live inside the APK, so
   /// the bytes are copied to a temp file named after the sound — chat apps
