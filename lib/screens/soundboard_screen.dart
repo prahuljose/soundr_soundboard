@@ -959,7 +959,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     // Basic URL validation
     final uri = Uri.tryParse(url);
     if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-      _showUrlError('Invalid URL — make sure it starts with https://');
+      _showMessage('Invalid URL — make sure it starts with https://');
       return;
     }
 
@@ -1047,12 +1047,12 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     Navigator.pop(context); // dismiss loading
 
     if (errorMessage != null) {
-      _showUrlError(errorMessage);
+      _showMessage(errorMessage);
       return;
     }
 
     if (filePath == null) {
-      _showUrlError('Download failed — check the URL and try again');
+      _showMessage('Download failed — check the URL and try again');
       return;
     }
 
@@ -1068,7 +1068,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     setState(() => _userClips = updated);
   }
 
-  void _showUrlError(String message) {
+  void _showMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1458,6 +1458,11 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               onTap: () { Navigator.pop(ctx); _toggleFavorite(sound); },
             ),
             _SheetOption(
+              icon: Icons.share_rounded,
+              label: 'Share sound',
+              onTap: () { Navigator.pop(ctx); _shareSound(sound); },
+            ),
+            _SheetOption(
               icon: Icons.dashboard_customize_rounded,
               label: 'Manage boards',
               onTap: () { Navigator.pop(ctx); _showManageBoardsSheet(sound); },
@@ -1558,7 +1563,38 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
   Future<void> _shareClip(SoundModel clip) async {
     if (clip.filePath == null) return;
-    await Share.shareXFiles([XFile(clip.filePath!)], text: clip.name);
+    await Share.shareXFiles([XFile(clip.filePath!)], text: _shareText(clip));
+  }
+
+  static const _playStoreUrl =
+      'https://play.google.com/store/apps/details?id=com.soundr.app';
+
+  String _shareText(SoundModel sound) =>
+      '${sound.emoji} ${sound.name} — sent from Soundr\n$_playStoreUrl';
+
+  /// Shares a built-in sound as an audio file. Assets live inside the APK, so
+  /// the bytes are copied to a temp file named after the sound — chat apps
+  /// show that filename, so "Emotional Damage.wav" beats "s30.wav".
+  Future<void> _shareSound(SoundModel sound) async {
+    try {
+      final data = await rootBundle.load('assets/sounds/raw/${sound.file}');
+      final ext = sound.file.split('.').last.toLowerCase();
+      var safeName = sound.name
+          .replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      if (safeName.isEmpty) safeName = 'Soundr sound';
+      final dir = Directory('${(await getTemporaryDirectory()).path}/share');
+      await dir.create(recursive: true);
+      final file = File('${dir.path}/$safeName.$ext');
+      await file.writeAsBytes(data.buffer.asUint8List(), flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: ext == 'mp3' ? 'audio/mpeg' : 'audio/wav')],
+        text: _shareText(sound),
+      );
+    } catch (_) {
+      _showMessage('Couldn’t share “${sound.name}” — try again');
+    }
   }
 
   Future<void> _deleteUserClip(SoundModel clip) async {
