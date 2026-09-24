@@ -11,6 +11,7 @@ import 'package:record/record.dart';
 
 import 'package:share_plus/share_plus.dart';
 
+import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 import '../widgets/permission_denied_card.dart';
 
@@ -471,7 +472,7 @@ class _DecibelScreenState extends State<DecibelScreen> {
       final cooledDown = _lastAlertAt == null ||
           now.difference(_lastAlertAt!).inSeconds >= _kAlertCooldownSec;
       if (sustained && cooledDown) {
-        HapticFeedback.heavyImpact();
+        Haptics.heavy();
         _lastAlertAt = now;
         _alertActive = true;
         _alertFadeTimer?.cancel();
@@ -697,8 +698,10 @@ class _DecibelScreenState extends State<DecibelScreen> {
 
                     // ── Big live number ────────────────────────────────────
                     Center(
-                      child: RichText(
-                        text: TextSpan(children: [
+                      // Text.rich (not RichText) so the inherited Outfit font
+                      // is applied to both spans.
+                      child: Text.rich(
+                        TextSpan(children: [
                           TextSpan(
                             text: db.toStringAsFixed(0),
                             style: TextStyle(

@@ -53,6 +53,9 @@ class ClipRepository {
             FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
           )
         ''');
+        await db.execute(
+          'CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+        );
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -86,8 +89,37 @@ class ClipRepository {
             )
           ''');
         }
+        if (oldVersion < 5) {
+          await db.execute(
+            'CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+          );
+        }
       },
-      version: 4,
+      version: 5,
+    );
+  }
+
+  // ── Settings (key/value) ───────────────────────────────────────────────────
+
+  static Future<bool> getBool(String key, {bool defaultValue = false}) async {
+    final db = await _database;
+    final rows = await db.query(
+      'settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: [key],
+      limit: 1,
+    );
+    if (rows.isEmpty) return defaultValue;
+    return rows.first['value'] == '1';
+  }
+
+  static Future<void> setBool(String key, bool value) async {
+    final db = await _database;
+    await db.insert(
+      'settings',
+      {'key': key, 'value': value ? '1' : '0'},
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 

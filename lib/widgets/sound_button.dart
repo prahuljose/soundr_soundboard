@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models/sound_model.dart';
+import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
 class SoundButton extends StatefulWidget {
@@ -85,7 +85,7 @@ class _SoundButtonState extends State<SoundButton>
   }
 
   void _handleTap() {
-    HapticFeedback.lightImpact();
+    Haptics.light();
     _pressController.forward().then((_) => _pressController.reverse());
     widget.onTap();
     _startPlaybackVisuals();
@@ -222,10 +222,14 @@ class _SoundButtonState extends State<SoundButton>
         ? (1.0 - _remaining / widget.duration).clamp(0.0, 1.0)
         : 0.0;
 
-    return GestureDetector(
-      onTapDown: (_) => _handleTap(),
-      child: ScaleTransition(
-        scale: _scale,
+    return Semantics(
+      button: true,
+      label: _semanticsLabel,
+      onTapHint: 'Play sound',
+      child: GestureDetector(
+        onTapDown: (_) => _handleTap(),
+        child: ScaleTransition(
+          scale: _scale,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           decoration: BoxDecoration(
@@ -265,29 +269,42 @@ class _SoundButtonState extends State<SoundButton>
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(widget.sound.emoji,
-                              style: const TextStyle(fontSize: 26)),
+                          ExcludeSemantics(
+                            child: Text(widget.sound.emoji,
+                                style: const TextStyle(fontSize: 26)),
+                          ),
                           const Spacer(),
-                          GestureDetector(
-                            onTap: () {
-                              HapticFeedback.selectionClick();
-                              widget.onFavoriteToggle();
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 2, left: 4),
-                              child: AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 200),
-                                transitionBuilder: (child, anim) =>
-                                    ScaleTransition(scale: anim, child: child),
-                                child: Icon(
-                                  widget.isFavorited
-                                      ? Icons.star_rounded
-                                      : Icons.star_outline_rounded,
-                                  key: ValueKey(widget.isFavorited),
-                                  size: 15,
-                                  color: widget.isFavorited
-                                      ? Colors.amber
-                                      : starUnfavColor,
+                          Semantics(
+                            button: true,
+                            toggled: widget.isFavorited,
+                            label: widget.isFavorited
+                                ? 'Remove ${widget.sound.name} from favorites'
+                                : 'Add ${widget.sound.name} to favorites',
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () {
+                                Haptics.selection();
+                                widget.onFavoriteToggle();
+                              },
+                              // Padding enlarges the hit area well beyond the
+                              // 15px icon so the star is comfortably tappable
+                              // while staying tucked in the top-right corner.
+                              child: Container(
+                                padding: const EdgeInsets.fromLTRB(10, 4, 2, 10),
+                                child: AnimatedSwitcher(
+                                  duration: const Duration(milliseconds: 200),
+                                  transitionBuilder: (child, anim) =>
+                                      ScaleTransition(scale: anim, child: child),
+                                  child: Icon(
+                                    widget.isFavorited
+                                        ? Icons.star_rounded
+                                        : Icons.star_outline_rounded,
+                                    key: ValueKey(widget.isFavorited),
+                                    size: 15,
+                                    color: widget.isFavorited
+                                        ? Colors.amber
+                                        : starUnfavColor,
+                                  ),
                                 ),
                               ),
                             ),
@@ -295,38 +312,42 @@ class _SoundButtonState extends State<SoundButton>
                         ],
                       ),
                       const Spacer(),
-                      RichText(
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        text: TextSpan(
-                          children: _buildNameSpans(nameColor),
+                      // Text.rich (not RichText) so the inherited Outfit
+                      // font from DefaultTextStyle propagates correctly.
+                      ExcludeSemantics(
+                        child: Text.rich(
+                          TextSpan(children: _buildNameSpans(nameColor)),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       const SizedBox(height: 5),
-                      Row(
-                        children: [
-                          Text(
-                            _isPlaying
-                                ? '${_remaining.toStringAsFixed(1)}s'
-                                : widget.duration > 0
-                                    ? '${widget.duration.toStringAsFixed(1)}s'
-                                    : '—',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w500,
-                              color: _isPlaying
-                                  ? _accent
-                                  : dimColor,
+                      ExcludeSemantics(
+                        child: Row(
+                          children: [
+                            Text(
+                              _isPlaying
+                                  ? '${_remaining.toStringAsFixed(1)}s'
+                                  : widget.duration > 0
+                                      ? '${widget.duration.toStringAsFixed(1)}s'
+                                      : '—',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                                color: _isPlaying
+                                    ? _accent
+                                    : dimColor,
+                              ),
                             ),
-                          ),
-                          const Spacer(),
-                          // Play count badge — shown once a sound has been played
-                          if (widget.playCount > 0)
-                            _PlayCountBadge(
-                              count: widget.playCount,
-                              color: _accent,
-                            ),
-                        ],
+                            const Spacer(),
+                            // Play count badge — shown once a sound has been played
+                            if (widget.playCount > 0)
+                              _PlayCountBadge(
+                                count: widget.playCount,
+                                color: _accent,
+                              ),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -335,8 +356,26 @@ class _SoundButtonState extends State<SoundButton>
             ),
           ),
         ),
+        ),
       ),
     );
+  }
+
+  /// Spoken description for screen readers — name, category, and length.
+  /// The visual emoji/name/duration are wrapped in [ExcludeSemantics] so this
+  /// is the single, clean announcement instead of a pile of fragments.
+  String get _semanticsLabel {
+    final buffer = StringBuffer(widget.sound.name);
+    buffer.write(', ${widget.sound.category}');
+    if (widget.duration > 0) {
+      buffer.write(', ${widget.duration.toStringAsFixed(1)} seconds');
+    }
+    if (widget.isFavorited) buffer.write(', favorited');
+    if (widget.playCount > 0) {
+      buffer.write(', played ${widget.playCount} '
+          '${widget.playCount == 1 ? 'time' : 'times'}');
+    }
+    return buffer.toString();
   }
 }
 

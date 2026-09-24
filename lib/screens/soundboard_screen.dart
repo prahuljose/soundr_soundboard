@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data' show BytesBuilder;
 import 'dart:ui' show lerpDouble;
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
@@ -8,13 +9,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:flutter/foundation.dart' show consolidateHttpClientResponseBytes;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../data/sounds_data.dart';
 import '../models/scene_model.dart';
 import '../models/sound_model.dart';
 import '../services/clip_repository.dart';
+import '../services/haptics.dart';
 import '../services/notification_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/sound_button.dart';
@@ -209,6 +210,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
       _favorites = await ClipRepository.getFavorites();
       _playCounts = await ClipRepository.getPlayCounts();
       await _loadScenes();
+      await Haptics.init();
     } catch (_) {/* non-fatal */}
 
     if (mounted) setState(() => _ready = true);
@@ -411,7 +413,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   void _playRandom() {
     final pool = _filtered;
     if (pool.isEmpty) return;
-    HapticFeedback.mediumImpact();
+    Haptics.medium();
     final sound = pool[Random().nextInt(pool.length)];
     _play(sound);
   }
@@ -840,6 +842,10 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
   static const _audioExts = {'mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'};
 
+  /// Hard ceiling on a URL-imported file. Guards against OOM from an
+  /// oversized (or malicious) URL — the whole body is buffered in memory.
+  static const _maxImportBytes = 25 * 1024 * 1024; // 25 MB
+
   /// Infer a file extension from a Content-Type header value.
   static String? _extFromContentType(String ct) {
     if (ct.contains('mpeg') || ct.contains('mp3'))  return 'mp3';
@@ -998,14 +1004,33 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
         if (!isAudioCt && !_audioExts.contains(ext)) {
           errorMessage =
               'URL does not appear to be an audio file (got: $contentType)';
+        } else if (response.contentLength > _maxImportBytes) {
+          // Reject early when the server advertises an oversized body.
+          errorMessage = 'File is too large — max 25 MB';
         } else {
-          final bytes = await consolidateHttpClientResponseBytes(response);
-          final dir   = await getTemporaryDirectory();
-          final name  = 'soundr_${DateTime.now().millisecondsSinceEpoch}'
-              '.${_audioExts.contains(ext) ? ext : 'mp3'}';
-          final file  = File('${dir.path}/$name');
-          await file.writeAsBytes(bytes);
-          filePath = file.path;
+          // Stream into memory with a running cap so a missing/lying
+          // Content-Length can't blow past the limit either.
+          final builder = BytesBuilder(copy: false);
+          var received = 0;
+          var tooLarge = false;
+          await for (final chunk in response) {
+            received += chunk.length;
+            if (received > _maxImportBytes) {
+              tooLarge = true;
+              break;
+            }
+            builder.add(chunk);
+          }
+          if (tooLarge) {
+            errorMessage = 'File is too large — max 25 MB';
+          } else {
+            final dir   = await getTemporaryDirectory();
+            final name  = 'soundr_${DateTime.now().millisecondsSinceEpoch}'
+                '.${_audioExts.contains(ext) ? ext : 'mp3'}';
+            final file  = File('${dir.path}/$name');
+            await file.writeAsBytes(builder.takeBytes());
+            filePath = file.path;
+          }
         }
       }
     } on SocketException {
@@ -1999,6 +2024,39 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               ),
             ),
 
+            // Haptics (vibration) toggle
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(children: [
+                  Icon(
+                    Haptics.enabled
+                        ? Icons.vibration_rounded
+                        : Icons.smartphone_rounded,
+                    size: 20, color: c.iconSecondary,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Text(
+                      'Haptics',
+                      style: TextStyle(color: c.textSecondary, fontSize: 15),
+                    ),
+                  ),
+                  Switch(
+                    value: Haptics.enabled,
+                    onChanged: (v) async {
+                      await Haptics.setEnabled(v);
+                      if (v) Haptics.selection();
+                      if (mounted) setState(() {});
+                    },
+                    activeThumbColor: currentAccent,
+                    activeTrackColor: currentAccent.withValues(alpha: 0.4),
+                  ),
+                ]),
+              ),
+            ),
+
             // Notifications — permanent way to fix denial after the
             // one-time SnackBar has been dismissed. Always tappable so users
             // can also tweak channel settings even when granted.
@@ -2423,28 +2481,32 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   Widget _buildEmptyState() {
     final c = Theme.of(context).extension<AppColors>()!;
 
-    // Search with no matches
+    // Search with no matches. Wrap in Center: without it, the Column ends up
+    // top-left-aligned inside the AnimatedSwitcher / Expanded chain, which
+    // also makes the FAB stack on the right look weirdly close to the text.
     if (_isSearching && _searchQuery.isNotEmpty) {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.search_off_rounded,
-              size: 48, color: c.textPrimary.withValues(alpha: 0.12)),
-          const SizedBox(height: 16),
-          Text(
-            'No results for "$_searchQuery"',
-            style: TextStyle(
-              color: c.iconSecondary,
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search_off_rounded,
+                size: 48, color: c.textPrimary.withValues(alpha: 0.12)),
+            const SizedBox(height: 16),
+            Text(
+              'No results for "$_searchQuery"',
+              style: TextStyle(
+                color: c.iconSecondary,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Try a different name or category',
-            style: TextStyle(color: c.textMuted, fontSize: 12),
-          ),
-        ],
+            const SizedBox(height: 6),
+            Text(
+              'Try a different name or category',
+              style: TextStyle(color: c.textMuted, fontSize: 12),
+            ),
+          ],
+        ),
       );
     }
 
@@ -2569,7 +2631,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               final sound = _recentlyPlayed[i];
               return GestureDetector(
                 onTapDown: (_) {
-                  HapticFeedback.selectionClick();
+                  Haptics.selection();
                   _play(sound);
                 },
                 child: Container(

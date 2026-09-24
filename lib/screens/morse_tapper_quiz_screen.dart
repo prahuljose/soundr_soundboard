@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
 enum _Phase { waiting, tapping, result }
@@ -85,7 +85,7 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
     _dashModeTimer = Timer(_dotThreshold, () {
       if (mounted) {
         setState(() => _isDashMode = true);
-        HapticFeedback.selectionClick();
+        Haptics.selection();
       }
     });
     _pressStart = DateTime.now();
@@ -94,7 +94,7 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
       _isDashMode = false;
       if (_phase == _Phase.waiting) _phase = _Phase.tapping;
     });
-    HapticFeedback.lightImpact();
+    Haptics.light();
   }
 
   void _onPressEnd() {
@@ -122,7 +122,7 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
     final symbol = isDash ? '-' : '.';
     setState(() => _currentMorse += symbol);
     _playSymbol(isDash);
-    HapticFeedback.selectionClick();
+    Haptics.selection();
 
     _letterTimer?.cancel();
     _letterTimer = Timer(_letterGap, _commit);
@@ -141,7 +141,7 @@ class _MorseTapperQuizScreenState extends State<MorseTapperQuizScreen> {
         _streak = 0;
       }
     });
-    HapticFeedback.mediumImpact();
+    Haptics.medium();
     _playResultSound(correct);
   }
 
