@@ -3,9 +3,9 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 
+import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
 // ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
         SoLoud.instance.play(src);
       } catch (_) {}
     }
-    if (beat == 0) HapticFeedback.mediumImpact();
+    if (beat == 0) Haptics.medium();
     setState(() {
       _lastBeat = beat;
       _flash = true;

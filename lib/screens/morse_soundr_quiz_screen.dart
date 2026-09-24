@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
 enum _Phase { idle, playing, answering, result }
@@ -137,7 +138,7 @@ class _MorseSoundrQuizScreenState extends State<MorseSoundrQuizScreen> {
       }
       _phase = _Phase.result;
     });
-    HapticFeedback.mediumImpact();
+    Haptics.medium();
   }
 
   @override

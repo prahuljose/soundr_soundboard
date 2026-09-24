@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
 class MorseSoundrScreen extends StatefulWidget {
@@ -141,7 +142,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
         setState(() => _currentSymbolIdx = j);
         final isDash = morse[j] == '-';
         _playSymbol(isDash);
-        HapticFeedback.selectionClick();
+        Haptics.selection();
 
         // Wait for the sound to finish + inter-symbol gap.
         await Future.delayed(

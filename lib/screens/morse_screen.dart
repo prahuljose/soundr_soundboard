@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
 class MorseScreen extends StatefulWidget {
@@ -58,11 +58,11 @@ class _MorseScreenState extends State<MorseScreen> {
     _dashModeTimer = Timer(_dotThreshold, () {
       if (mounted) {
         setState(() => _isDashMode = true);
-        HapticFeedback.selectionClick();
+        Haptics.selection();
       }
     });
     setState(() { _isPressed = true; _isDashMode = false; });
-    HapticFeedback.lightImpact();
+    Haptics.light();
   }
 
   void _onPressEnd() {
@@ -86,7 +86,7 @@ class _MorseScreenState extends State<MorseScreen> {
     final symbol = isDash ? '-' : '.';
     setState(() => _currentMorse += symbol);
     _playSymbol(isDash);
-    HapticFeedback.selectionClick();
+    Haptics.selection();
 
     _letterTimer?.cancel();
     _letterTimer = Timer(_letterGap, _commitLetter);
@@ -96,7 +96,7 @@ class _MorseScreenState extends State<MorseScreen> {
     if (_currentMorse.isEmpty) return;
     final letter = _morseToChar[_currentMorse] ?? '?';
     setState(() { _decodedText += letter; _currentMorse = ''; });
-    HapticFeedback.mediumImpact();
+    Haptics.medium();
 
     _wordTimer?.cancel();
     _wordTimer = Timer(_wordGap, _commitSpace);
@@ -123,14 +123,14 @@ class _MorseScreenState extends State<MorseScreen> {
     } else if (_decodedText.isNotEmpty) {
       setState(() => _decodedText = _decodedText.substring(0, _decodedText.length - 1));
     }
-    HapticFeedback.selectionClick();
+    Haptics.selection();
   }
 
   void _clear() {
     _letterTimer?.cancel();
     _wordTimer?.cancel();
     setState(() { _currentMorse = ''; _decodedText = ''; });
-    HapticFeedback.mediumImpact();
+    Haptics.medium();
   }
 
   /// Display version of _currentMorse (· and −).
