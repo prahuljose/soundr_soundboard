@@ -48,3 +48,6 @@ app.*.map.json
 android/key.properties
 *.jks
 *.keystore
+
+# /brag launch-video output (rendered MP4 + drafts)
+brag-output/
