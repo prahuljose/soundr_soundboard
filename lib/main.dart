@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'screens/soundboard_screen.dart';
+import 'services/app_settings.dart';
 import 'theme/app_colors.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Load the saved theme + accent before the first frame so the app doesn't
+  // flash the defaults on every launch.
+  await AppSettings.load();
   runApp(const SoundrApp());
 }
 
@@ -14,8 +19,8 @@ class SoundrApp extends StatefulWidget {
 }
 
 class _SoundrAppState extends State<SoundrApp> {
-  final _themeNotifier  = ValueNotifier(ThemeMode.dark);
-  final _accentNotifier = ValueNotifier<Color>(const Color(0xFF6C63FF));
+  final _themeNotifier  = AppSettings.themeMode;
+  final _accentNotifier = AppSettings.accent;
 
   ThemeData _buildTheme(Brightness brightness) {
     final c = brightness == Brightness.dark ? AppColors.dark : AppColors.light;
@@ -62,13 +67,6 @@ class _SoundrAppState extends State<SoundrApp> {
       ),
       extensions: [c],
     );
-  }
-
-  @override
-  void dispose() {
-    _themeNotifier.dispose();
-    _accentNotifier.dispose();
-    super.dispose();
   }
 
   @override
