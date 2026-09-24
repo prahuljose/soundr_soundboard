@@ -14,6 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../data/sounds_data.dart';
 import '../models/scene_model.dart';
 import '../models/sound_model.dart';
+import '../services/app_settings.dart';
 import '../services/clip_repository.dart';
 import '../services/haptics.dart';
 import '../services/notification_service.dart';
@@ -30,6 +31,7 @@ import 'morse_soundr_screen.dart';
 import 'morse_tapper_quiz_screen.dart';
 import 'morse_soundr_quiz_screen.dart';
 import 'record_screen.dart';
+import 'settings_screen.dart';
 import 'speed_round_screen.dart';
 import 'pair_match_screen.dart';
 import 'zen_screen.dart';
@@ -1830,15 +1832,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     );
   }
 
-  static const _accentPresets = [
-    Color(0xFF6C63FF),
-    Color(0xFF2196F3),
-    Color(0xFF00BCD4),
-    Color(0xFF4CAF50),
-    Color(0xFFFF9800),
-    Color(0xFFE91E63),
-  ];
-
   Widget _buildDrawer(AppColors c) {
     final isDark = widget.themeNotifier.value == ThemeMode.dark;
     final currentAccent = widget.accentNotifier.value;
@@ -2026,7 +2019,23 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
             Divider(color: c.borderSubtle, height: 1),
 
             // ── App Preferences ──────────────────────────────────────────────
-            _DrawerSectionLabel('APP PREFERENCES'),
+            Row(children: [
+              const Expanded(child: _DrawerSectionLabel('APP PREFERENCES')),
+              Padding(
+                padding: const EdgeInsets.only(top: 10, right: 12),
+                child: TextButton.icon(
+                  onPressed: () => nav(const SettingsScreen()),
+                  icon: const Icon(Icons.tune_rounded, size: 16),
+                  label: const Text('All settings'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: currentAccent,
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                        fontSize: 12.5, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ]),
 
             // Dark / Light toggle
             Padding(
@@ -2172,7 +2181,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: _accentPresets.map((color) {
+                children: AppSettings.accentPresets.map((color) {
                   final selected = currentAccent == color;
                   return GestureDetector(
                     onTap: () => widget.accentNotifier.value = color,
@@ -2475,36 +2484,44 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                     key: ValueKey('empty_${_isSearching ? 'search' : _selectedCategory}'),
                     child: _buildEmptyState(),
                   )
-                : GridView.builder(
+                : ValueListenableBuilder<GridDensity>(
                     key: ValueKey(_isSearching ? 'search' : _selectedCategory),
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      childAspectRatio: 0.9,
-                    ),
-                    itemCount: _filtered.length,
-                    itemBuilder: (context, i) {
-                      final sound = _filtered[i];
-                      return GestureDetector(
-                        onLongPress: sound.isUserClip
-                            ? () => _showClipOptions(sound)
-                            : () => _showSoundOptions(sound),
-                        child: SoundButton(
-                          sound: sound,
-                          duration: _durations[sound.id] ?? 0,
-                          stopSignal: _stopSignal,
-                          stopOthersSignal: _stopOthersSignal,
-                          excludeFromStopOthers:
-                              _stopOnTapExcludeId == sound.id,
-                          isFavorited: _favorites.contains(sound.id),
-                          onFavoriteToggle: () => _toggleFavorite(sound),
-                          onTap: () => _play(sound),
-                          playCount: _playCounts[sound.id] ?? 0,
-                          highlightQuery: _isSearching ? _searchQuery : '',
+                    valueListenable: AppSettings.gridDensity,
+                    builder: (context, density, _) {
+                      final gap = density == GridDensity.compact ? 8.0 : 10.0;
+                      return GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                        // Max-extent (not a fixed count) so landscape phones
+                        // and tablets get more columns automatically.
+                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: density.maxExtent,
+                          crossAxisSpacing: gap,
+                          mainAxisSpacing: gap,
+                          mainAxisExtent: density.tileHeight,
                         ),
+                        itemCount: _filtered.length,
+                        itemBuilder: (context, i) {
+                          final sound = _filtered[i];
+                          return GestureDetector(
+                            onLongPress: sound.isUserClip
+                                ? () => _showClipOptions(sound)
+                                : () => _showSoundOptions(sound),
+                            child: SoundButton(
+                              sound: sound,
+                              duration: _durations[sound.id] ?? 0,
+                              stopSignal: _stopSignal,
+                              stopOthersSignal: _stopOthersSignal,
+                              excludeFromStopOthers:
+                                  _stopOnTapExcludeId == sound.id,
+                              isFavorited: _favorites.contains(sound.id),
+                              onFavoriteToggle: () => _toggleFavorite(sound),
+                              onTap: () => _play(sound),
+                              playCount: _playCounts[sound.id] ?? 0,
+                              highlightQuery: _isSearching ? _searchQuery : '',
+                              density: density,
+                            ),
+                          );
+                        },
                       );
                     },
                   ),

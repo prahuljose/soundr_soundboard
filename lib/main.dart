@@ -19,55 +19,8 @@ class SoundrApp extends StatefulWidget {
 }
 
 class _SoundrAppState extends State<SoundrApp> {
-  final _themeNotifier  = AppSettings.themeMode;
+  final _themeNotifier = AppSettings.themeMode;
   final _accentNotifier = AppSettings.accent;
-
-  ThemeData _buildTheme(Brightness brightness) {
-    final c = brightness == Brightness.dark ? AppColors.dark : AppColors.light;
-    return ThemeData(
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: _accentNotifier.value,
-        brightness: brightness,
-      ),
-      useMaterial3: true,
-      scaffoldBackgroundColor: c.scaffoldBg,
-      // Bundled Outfit font (variable). The 'Outfit' family is declared in
-      // pubspec.yaml under flutter.fonts, so this resolves locally — no
-      // runtime download, works fully offline.
-      fontFamily: 'Outfit',
-      textTheme: ThemeData(brightness: brightness)
-          .textTheme
-          .apply(fontFamily: 'Outfit'),
-      appBarTheme: AppBarTheme(
-        backgroundColor: c.scaffoldBg,
-        foregroundColor: c.textPrimary,
-        surfaceTintColor: Colors.transparent,
-        scrolledUnderElevation: 0,
-        elevation: 0,
-        iconTheme: IconThemeData(color: c.textSecondary),
-        actionsIconTheme: IconThemeData(color: c.textPrimary),
-      ),
-      bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: c.surfaceCard,
-        surfaceTintColor: Colors.transparent,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-      ),
-      dialogTheme: DialogThemeData(
-        backgroundColor: c.surfaceCard,
-        surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      ),
-      snackBarTheme: SnackBarThemeData(
-        backgroundColor: c.snackbarBg,
-        contentTextStyle: TextStyle(color: c.textPrimary),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-      extensions: [c],
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -78,8 +31,8 @@ class _SoundrAppState extends State<SoundrApp> {
         builder: (context, accent, child) => MaterialApp(
           title: 'Soundr Soundboard',
           debugShowCheckedModeBanner: false,
-          theme: _buildTheme(Brightness.light),
-          darkTheme: _buildTheme(Brightness.dark),
+          theme: buildSoundrTheme(Brightness.light, accent),
+          darkTheme: buildSoundrTheme(Brightness.dark, accent),
           themeMode: mode,
           home: SoundboardScreen(
             themeNotifier: _themeNotifier,
@@ -89,4 +42,51 @@ class _SoundrAppState extends State<SoundrApp> {
       ),
     );
   }
+}
+
+ThemeData buildSoundrTheme(Brightness brightness, Color accent) {
+  final c = brightness == Brightness.dark ? AppColors.dark : AppColors.light;
+  return ThemeData(
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: accent,
+      brightness: brightness,
+    ),
+    useMaterial3: true,
+    scaffoldBackgroundColor: c.scaffoldBg,
+    // Bundled Outfit font (variable). The 'Outfit' family is declared in
+    // pubspec.yaml under flutter.fonts, so this resolves locally — no
+    // runtime download, works fully offline.
+    fontFamily: 'Outfit',
+    textTheme: ThemeData(
+      brightness: brightness,
+    ).textTheme.apply(fontFamily: 'Outfit'),
+    appBarTheme: AppBarTheme(
+      backgroundColor: c.scaffoldBg,
+      foregroundColor: c.textPrimary,
+      surfaceTintColor: Colors.transparent,
+      scrolledUnderElevation: 0,
+      elevation: 0,
+      iconTheme: IconThemeData(color: c.textSecondary),
+      actionsIconTheme: IconThemeData(color: c.textPrimary),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: c.surfaceCard,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: c.surfaceCard,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+    ),
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor: c.snackbarBg,
+      contentTextStyle: TextStyle(color: c.textPrimary),
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    extensions: [c],
+  );
 }

@@ -4,21 +4,22 @@ import 'clip_repository.dart';
 
 /// How big the soundboard buttons are. Each density sets a *maximum* button
 /// width rather than a fixed column count, so phones in landscape and tablets
-/// automatically get more columns.
+/// automatically get more columns. Height is fixed per density so a two-line
+/// name always fits, however narrow the columns get.
 enum GridDensity {
-  compact(label: 'Compact', maxExtent: 92, aspectRatio: 0.92),
-  normal(label: 'Normal', maxExtent: 130, aspectRatio: 0.9),
-  large(label: 'Large', maxExtent: 200, aspectRatio: 1.2);
+  compact(label: 'Compact', maxExtent: 92, tileHeight: 98),
+  normal(label: 'Normal', maxExtent: 130, tileHeight: 118),
+  large(label: 'Large', maxExtent: 200, tileHeight: 152);
 
   const GridDensity({
     required this.label,
     required this.maxExtent,
-    required this.aspectRatio,
+    required this.tileHeight,
   });
 
   final String label;
   final double maxExtent;
-  final double aspectRatio;
+  final double tileHeight;
 
   static GridDensity fromName(String? name) =>
       GridDensity.values.firstWhere((d) => d.name == name,
@@ -34,6 +35,15 @@ class AppSettings {
   AppSettings._();
 
   static const defaultAccent = Color(0xFF6C63FF);
+
+  static const accentPresets = [
+    Color(0xFF6C63FF),
+    Color(0xFF2196F3),
+    Color(0xFF00BCD4),
+    Color(0xFF4CAF50),
+    Color(0xFFFF9800),
+    Color(0xFFE91E63),
+  ];
 
   static final themeMode = ValueNotifier(ThemeMode.dark);
   static final accent = ValueNotifier<Color>(defaultAccent);

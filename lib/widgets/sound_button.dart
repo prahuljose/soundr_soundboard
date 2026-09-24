@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/sound_model.dart';
+import '../services/app_settings.dart';
 import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
@@ -21,6 +22,8 @@ class SoundButton extends StatefulWidget {
   final bool excludeFromStopOthers;
   /// When non-empty, matching characters in the sound name are highlighted.
   final String highlightQuery;
+  /// Scales the emoji, text and padding to match the chosen grid size.
+  final GridDensity density;
 
   const SoundButton({
     super.key,
@@ -34,6 +37,7 @@ class SoundButton extends StatefulWidget {
     this.stopOthersSignal = 0,
     this.excludeFromStopOthers = false,
     this.highlightQuery = '',
+    this.density = GridDensity.normal,
   });
 
   @override
@@ -112,7 +116,7 @@ class _SoundButtonState extends State<SoundButton>
   /// Splits the sound name into normal + highlighted spans for search queries.
   List<TextSpan> _buildNameSpans(Color textColor) {
     final baseStyle = TextStyle(
-      fontSize: 12.5,
+      fontSize: _metrics.name,
       fontWeight: FontWeight.w600,
       color: textColor,
       height: 1.2,
@@ -148,6 +152,19 @@ class _SoundButtonState extends State<SoundButton>
     }
     return spans;
   }
+
+  ({double emoji, double name, double meta, double star, double radius,
+      EdgeInsets padding}) get _metrics => switch (widget.density) {
+        GridDensity.compact => (
+            emoji: 20, name: 11, meta: 9, star: 13, radius: 14,
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 9)),
+        GridDensity.normal => (
+            emoji: 26, name: 12.5, meta: 10, star: 15, radius: 18,
+            padding: const EdgeInsets.fromLTRB(11, 11, 11, 14)),
+        GridDensity.large => (
+            emoji: 34, name: 15, meta: 11.5, star: 18, radius: 22,
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 16)),
+      };
 
   Color get _accent {
     if (widget.sound.customColor != null) {
@@ -218,6 +235,7 @@ class _SoundButtonState extends State<SoundButton>
     final dimColor = isDark ? Colors.white.withValues(alpha: 0.28) : c.textMuted;
     final starUnfavColor = isDark ? Colors.white.withValues(alpha: 0.2) : c.textMuted;
 
+    final m = _metrics;
     final progress = widget.duration > 0
         ? (1.0 - _remaining / widget.duration).clamp(0.0, 1.0)
         : 0.0;
@@ -234,7 +252,7 @@ class _SoundButtonState extends State<SoundButton>
           duration: const Duration(milliseconds: 180),
           decoration: BoxDecoration(
             color: bg,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(m.radius),
             border: Border.all(
               color: _isPlaying
                   ? _accent.withValues(alpha: 0.75)
@@ -246,7 +264,7 @@ class _SoundButtonState extends State<SoundButton>
                 : [],
           ),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(m.radius),
             child: Stack(
               children: [
                 // Playback progress bar
@@ -262,7 +280,7 @@ class _SoundButtonState extends State<SoundButton>
                   ),
                 // Content
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(11, 11, 11, 14),
+                  padding: m.padding,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -271,7 +289,7 @@ class _SoundButtonState extends State<SoundButton>
                         children: [
                           ExcludeSemantics(
                             child: Text(widget.sound.emoji,
-                                style: const TextStyle(fontSize: 26)),
+                                style: TextStyle(fontSize: m.emoji)),
                           ),
                           const Spacer(),
                           Semantics(
@@ -300,7 +318,7 @@ class _SoundButtonState extends State<SoundButton>
                                         ? Icons.star_rounded
                                         : Icons.star_outline_rounded,
                                     key: ValueKey(widget.isFavorited),
-                                    size: 15,
+                                    size: m.star,
                                     color: widget.isFavorited
                                         ? Colors.amber
                                         : starUnfavColor,
@@ -321,7 +339,8 @@ class _SoundButtonState extends State<SoundButton>
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      const SizedBox(height: 5),
+                      SizedBox(
+                          height: widget.density == GridDensity.compact ? 3 : 5),
                       ExcludeSemantics(
                         child: Row(
                           children: [
@@ -332,7 +351,7 @@ class _SoundButtonState extends State<SoundButton>
                                       ? '${widget.duration.toStringAsFixed(1)}s'
                                       : '—',
                               style: TextStyle(
-                                fontSize: 10,
+                                fontSize: m.meta,
                                 fontWeight: FontWeight.w500,
                                 color: _isPlaying
                                     ? _accent
