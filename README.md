@@ -134,7 +134,7 @@ Everything here is real signal processing, running on the phone:
 | **Hearing check** | Synthesised 2 s sine tones with 50 ms fades. The highest frequency you hear maps to an estimated auditory age via an ISO 7029-style lookup. |
 | **Metronome** | Synthesised decaying sine clicks (1 kHz, with a 1.5 kHz accent). Tap tempo averages your last 8 taps. |
 | **Recording** | Raw PCM16 stream → live RMS meter → a hand-built RIFF/WAV header, no encoder dependency. |
-| **Speed Round** | $\text{points} = \max\!\left(1, \operatorname{round}\!\left(\tfrac{t_{\text{left}}}{5}\cdot 10\right)\right) \times \{1,\ 1.5,\ 2\}$, with the multiplier kicking in at 3- and 7-answer streaks. |
+| **Speed Round** | $\text{points} = \max\left(1,\ \mathrm{round}\left(\frac{t_{\text{left}}}{5}\cdot 10\right)\right) \times \lbrace 1,\ 1.5,\ 2 \rbrace$, with the multiplier kicking in at 3- and 7-answer streaks. |
 
 ### Architecture
 
