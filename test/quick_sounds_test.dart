@@ -23,6 +23,37 @@ void main() {
         reason: 'no duplicates');
   });
 
+  test('custom mode keeps the chosen sounds in the chosen order', () {
+    final picked = QuickSounds.pick(
+      all: all,
+      favorites: {'s1'},
+      playCounts: {'s1': 99},
+      mode: WidgetSoundsMode.custom,
+      customIds: ['s30', 's12', 's1'],
+    );
+    expect(picked.map((s) => s.id), ['s30', 's12', 's1']);
+  });
+
+  test('custom mode skips missing sounds and falls back when none are left', () {
+    final some = QuickSounds.pick(
+      all: all,
+      favorites: {},
+      playCounts: {},
+      mode: WidgetSoundsMode.custom,
+      customIds: ['deleted_clip', 's25'],
+    );
+    expect(some.map((s) => s.id), ['s25']);
+
+    final none = QuickSounds.pick(
+      all: all,
+      favorites: {},
+      playCounts: {},
+      mode: WidgetSoundsMode.custom,
+      customIds: ['deleted_clip'],
+    );
+    expect(none, hasLength(QuickSounds.maxSounds), reason: 'automatic fallback');
+  });
+
   test('never more than the widget can show', () {
     final favorites = {for (final s in all.take(20)) s.id};
     final picked = QuickSounds.pick(all: all, favorites: favorites, playCounts: {});

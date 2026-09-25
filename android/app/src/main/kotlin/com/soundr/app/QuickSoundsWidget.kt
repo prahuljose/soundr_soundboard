@@ -116,7 +116,13 @@ class QuickSoundsWidget : AppWidgetProvider() {
                         views.setContentDescription(slotIds[i], "Play ${s.name}")
                         views.setOnClickPendingIntent(slotIds[i], playIntent(context, i))
                     } else {
-                        views.setViewVisibility(slotIds[i], View.GONE)
+                        // A part-filled second row keeps quarter-width tiles
+                        // (INVISIBLE holds the space); a short first row
+                        // lets its tiles stretch to fill the widget (GONE).
+                        views.setViewVisibility(
+                            slotIds[i],
+                            if (i >= 4 && i < rows * 4) View.INVISIBLE else View.GONE,
+                        )
                     }
                 }
             }

@@ -6,6 +6,7 @@ import '../services/haptics.dart';
 import '../services/quick_sounds.dart';
 import '../theme/app_colors.dart';
 import '../widgets/first_run_tour.dart';
+import 'widget_sounds_screen.dart';
 
 /// All app preferences in one place. Opened from the drawer.
 class SettingsScreen extends StatefulWidget {
@@ -18,12 +19,32 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen>
     with WidgetsBindingObserver {
   bool _notificationsGranted = true;
+  String _widgetSummary = 'Automatic · favourites first';
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _refreshNotificationStatus();
+    _refreshWidgetSummary();
+  }
+
+  Future<void> _refreshWidgetSummary() async {
+    final choice = await QuickSounds.loadChoice();
+    if (!mounted) return;
+    final n = choice.ids.length;
+    setState(() => _widgetSummary =
+        choice.mode == WidgetSoundsMode.custom && n > 0
+            ? 'Custom · $n ${n == 1 ? 'sound' : 'sounds'}, your order'
+            : 'Automatic · favourites first');
+  }
+
+  Future<void> _openWidgetSounds() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const WidgetSoundsScreen()),
+    );
+    await _refreshWidgetSummary();
   }
 
   @override
@@ -335,6 +356,13 @@ class _SettingsScreenState extends State<SettingsScreen>
               title: 'Add home-screen widget',
               subtitle: 'Play your favourites without opening Soundr',
               onTap: _addWidget,
+            ),
+            _Divider(c),
+            _TapRow(
+              icon: Icons.library_music_rounded,
+              title: 'Choose widget sounds',
+              subtitle: _widgetSummary,
+              onTap: _openWidgetSounds,
             ),
 
           ]),
