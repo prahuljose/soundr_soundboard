@@ -2,6 +2,11 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Morse "vibrate" option. Already merged in by flutter_local_notifications;
+         declared here so it's explicit. Normal permission — no user prompt.
+         The Morse flashlight uses CameraManager.setTorchMode, which needs no
+         CAMERA permission. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- flutter_local_notifications merges in RECEIVE_BOOT_COMPLETED and a
          boot-completed receiver for scheduled notifications. We never schedule
          notifications (only immediate show/cancel), so we strip both to keep

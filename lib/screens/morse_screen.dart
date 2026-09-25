@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import '../services/clip_repository.dart';
+import '../services/device_features.dart';
 import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
@@ -39,6 +41,48 @@ class _MorseScreenState extends State<MorseScreen> {
   bool _isDashMode  = false; // true once press exceeds dot threshold
   bool _isMuted     = false;
 
+  // Opt-in: light the torch / buzz for as long as the key is held.
+  bool _flashWhileHeld   = false;
+  bool _vibrateWhileHeld = false;
+  bool _hasTorch    = false;
+  bool _hasVibrator = false;
+  static const _kFlash   = 'morse_tapper_flash';
+  static const _kVibrate = 'morse_tapper_vibrate';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSignalPrefs();
+  }
+
+  Future<void> _loadSignalPrefs() async {
+    final hasTorch = await DeviceFeatures.hasTorch();
+    final hasVibrator = await DeviceFeatures.hasVibrator();
+    var flash = false, vibrate = false;
+    try {
+      flash = await ClipRepository.getBool(_kFlash);
+      vibrate = await ClipRepository.getBool(_kVibrate);
+    } catch (_) {/* keep defaults */}
+    if (!mounted) return;
+    setState(() {
+      _hasTorch = hasTorch;
+      _hasVibrator = hasVibrator;
+      _flashWhileHeld = flash && hasTorch;
+      _vibrateWhileHeld = vibrate && hasVibrator;
+    });
+  }
+
+  void _signalOn() {
+    if (_flashWhileHeld) DeviceFeatures.setTorch(true);
+    // Long one-shot, cancelled on release — no press lasts 10 s.
+    if (_vibrateWhileHeld) DeviceFeatures.vibrate(10000);
+  }
+
+  void _signalOff() {
+    if (_hasTorch) DeviceFeatures.setTorch(false);
+    if (_hasVibrator) DeviceFeatures.cancelVibrate();
+  }
+
   // Adjustable timing values (milliseconds)
   int _dotThresholdMs = 260;  // how long a press must be held to count as a dash
   int _letterGapMs    = 800;  // silence before the current symbols commit to a letter
@@ -63,10 +107,12 @@ class _MorseScreenState extends State<MorseScreen> {
     });
     setState(() { _isPressed = true; _isDashMode = false; });
     Haptics.light();
+    _signalOn();
   }
 
   void _onPressEnd() {
     _dashModeTimer?.cancel();
+    _signalOff();
     if (_pressStart == null) return;
     final held   = DateTime.now().difference(_pressStart!);
     final isDash = held >= _dotThreshold;
@@ -77,6 +123,7 @@ class _MorseScreenState extends State<MorseScreen> {
 
   void _onPressCancel() {
     _dashModeTimer?.cancel();
+    _signalOff();
     setState(() { _isPressed = false; _isDashMode = false; });
   }
 
@@ -142,6 +189,12 @@ class _MorseScreenState extends State<MorseScreen> {
   void _showTimingSheet() {
     showModalBottomSheet(
       context: context,
+      // Taller than the default 9/16 cap now that it holds the flashlight /
+      // vibrate switches; the content scrolls on short screens.
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+      ),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -230,8 +283,47 @@ class _MorseScreenState extends State<MorseScreen> {
             );
           }
 
+          Widget toggle({
+            required IconData icon,
+            required String label,
+            required String sublabel,
+            required bool value,
+            required ValueChanged<bool> onChanged,
+          }) {
+            return Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Row(children: [
+                Icon(icon,
+                    color: value ? accent : sc.iconSecondary, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(label, style: TextStyle(
+                        color: sc.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      )),
+                      Text(sublabel, style: TextStyle(
+                        color: sc.textMuted,
+                        fontSize: 11,
+                      )),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: value,
+                  onChanged: onChanged,
+                  activeThumbColor: accent,
+                  activeTrackColor: accent.withValues(alpha: 0.5),
+                ),
+              ]),
+            );
+          }
+
           return SafeArea(
-            child: Padding(
+            child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -301,6 +393,28 @@ class _MorseScreenState extends State<MorseScreen> {
                       activeTrackColor: accent.withValues(alpha: 0.5),
                     ),
                   ]),
+                  if (_hasTorch)
+                    toggle(
+                      icon: Icons.flashlight_on_rounded,
+                      label: 'Flashlight',
+                      sublabel: 'Light the torch while you hold the key',
+                      value: _flashWhileHeld,
+                      onChanged: (v) {
+                        update(() => _flashWhileHeld = v);
+                        ClipRepository.setBool(_kFlash, v).catchError((_) {});
+                      },
+                    ),
+                  if (_hasVibrator)
+                    toggle(
+                      icon: Icons.vibration_rounded,
+                      label: 'Vibrate',
+                      sublabel: 'Buzz while you hold the key',
+                      value: _vibrateWhileHeld,
+                      onChanged: (v) {
+                        update(() => _vibrateWhileHeld = v);
+                        ClipRepository.setBool(_kVibrate, v).catchError((_) {});
+                      },
+                    ),
                   Divider(color: sc.border, height: 28),
 
                   slider(
@@ -335,6 +449,7 @@ class _MorseScreenState extends State<MorseScreen> {
 
   @override
   void dispose() {
+    _signalOff();
     _letterTimer?.cancel();
     _wordTimer?.cancel();
     _dashModeTimer?.cancel();

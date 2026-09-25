@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
+import '../services/clip_repository.dart';
+import '../services/device_features.dart';
 import '../services/haptics.dart';
 import '../theme/app_colors.dart';
 
@@ -38,6 +40,17 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
   bool   _practiceMode     = false;
   int    _playSession      = 0;   // incremented to cancel in-flight playback
 
+  // How each symbol is signalled. Flash and vibrate are opt-in and only
+  // offered when the phone has the hardware. All three are remembered.
+  bool _soundOn     = true;
+  bool _flashOn     = false;
+  bool _vibrateOn   = false;
+  bool _hasTorch    = false;
+  bool _hasVibrator = false;
+  static const _kSound   = 'morse_soundr_sound';
+  static const _kFlash   = 'morse_soundr_flash';
+  static const _kVibrate = 'morse_soundr_vibrate';
+
   // Actual sound durations — read from SoLoud after the sources are loaded.
   Duration _dotDuration  = const Duration(milliseconds: 250);
   Duration _dashDuration = const Duration(milliseconds: 500);
@@ -59,6 +72,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
   void initState() {
     super.initState();
     _textController.addListener(() => setState(() {}));
+    _loadSignalPrefs();
 
     // Read real sound durations from the already-loaded sources.
     if (widget.dotSource != null) {
@@ -75,8 +89,46 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
     }
   }
 
+  Future<void> _loadSignalPrefs() async {
+    final hasTorch = await DeviceFeatures.hasTorch();
+    final hasVibrator = await DeviceFeatures.hasVibrator();
+    var sound = true, flash = false, vibrate = false;
+    try {
+      sound = await ClipRepository.getBool(_kSound, defaultValue: true);
+      flash = await ClipRepository.getBool(_kFlash);
+      vibrate = await ClipRepository.getBool(_kVibrate);
+    } catch (_) {/* keep defaults */}
+    if (!mounted) return;
+    setState(() {
+      _hasTorch = hasTorch;
+      _hasVibrator = hasVibrator;
+      _soundOn = sound;
+      _flashOn = flash && hasTorch;
+      _vibrateOn = vibrate && hasVibrator;
+    });
+  }
+
+  void _setSignal(String key, bool value) {
+    setState(() {
+      switch (key) {
+        case _kSound:   _soundOn = value;
+        case _kFlash:   _flashOn = value;
+        case _kVibrate: _vibrateOn = value;
+      }
+    });
+    Haptics.selection();
+    ClipRepository.setBool(key, value).catchError((_) {});
+  }
+
+  /// Never leave the torch on or a buzz running after playback ends.
+  void _signalsOff() {
+    if (_hasTorch) DeviceFeatures.setTorch(false);
+    if (_hasVibrator) DeviceFeatures.cancelVibrate();
+  }
+
   @override
   void dispose() {
+    _signalsOff();
     _playSession++; // cancel any in-flight Future chain
     _textController.dispose();
     _chipController.dispose();
@@ -86,6 +138,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
   // ── Playback ────────────────────────────────────────────────────────────────
 
   void _playSymbol(bool isDash) {
+    if (!_soundOn) return;
     final src = isDash ? widget.dashSource : widget.dotSource;
     if (src == null) return;
     try { SoLoud.instance.play(src); } catch (_) {}
@@ -141,12 +194,19 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
 
         setState(() => _currentSymbolIdx = j);
         final isDash = morse[j] == '-';
+        final length = isDash ? _dashDuration : _dotDuration;
         _playSymbol(isDash);
-        Haptics.selection();
+        if (_flashOn) DeviceFeatures.setTorch(true);
+        if (_vibrateOn) {
+          DeviceFeatures.vibrate(length.inMilliseconds);
+        } else {
+          Haptics.selection();
+        }
 
-        // Wait for the sound to finish + inter-symbol gap.
-        await Future.delayed(
-            (isDash ? _dashDuration : _dotDuration) + _symbolGap);
+        // Hold the symbol (sound / light / buzz), then the inter-symbol gap.
+        await Future.delayed(length);
+        if (_flashOn) DeviceFeatures.setTorch(false);
+        await Future.delayed(_symbolGap);
       }
 
       if (_playSession != session || !mounted) break;
@@ -165,6 +225,7 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
 
   void _stopPlayback() {
     _playSession++;
+    _signalsOff();
     setState(() {
       _isPlaying        = false;
       _currentLetterIdx = -1;
@@ -454,6 +515,43 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
             ]),
           ),
 
+          // ── Signal options: sound / flashlight / vibrate ───────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+            child: Row(children: [
+              Expanded(
+                child: _SignalChip(
+                  icon: Icons.volume_up_rounded,
+                  label: 'Sound',
+                  selected: _soundOn,
+                  onTap: _isPlaying ? null : () => _setSignal(_kSound, !_soundOn),
+                ),
+              ),
+              if (_hasTorch) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _SignalChip(
+                    icon: Icons.flashlight_on_rounded,
+                    label: 'Flash',
+                    selected: _flashOn,
+                    onTap: _isPlaying ? null : () => _setSignal(_kFlash, !_flashOn),
+                  ),
+                ),
+              ],
+              if (_hasVibrator) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _SignalChip(
+                    icon: Icons.vibration_rounded,
+                    label: 'Vibrate',
+                    selected: _vibrateOn,
+                    onTap: _isPlaying ? null : () => _setSignal(_kVibrate, !_vibrateOn),
+                  ),
+                ),
+              ],
+            ]),
+          ),
+
           // ── Speed slider ───────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
@@ -562,6 +660,67 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Signal toggle chip ────────────────────────────────────────────────────────
+
+class _SignalChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  const _SignalChip({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final accent = Theme.of(context).colorScheme.primary;
+    final fg = selected ? accent : c.textSecondary;
+    return Semantics(
+      button: true,
+      toggled: selected,
+      label: label,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 150),
+          opacity: onTap == null ? 0.5 : 1,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            height: 38,
+            decoration: BoxDecoration(
+              color: selected ? accent.withValues(alpha: 0.14) : c.surfaceCard,
+              borderRadius: BorderRadius.circular(19),
+              border: Border.all(
+                color: selected ? accent.withValues(alpha: 0.6) : c.border,
+              ),
+            ),
+            child: ExcludeSemantics(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, size: 16, color: fg),
+                  const SizedBox(width: 6),
+                  Text(label,
+                      style: TextStyle(
+                        color: fg,
+                        fontSize: 13,
+                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                      )),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
