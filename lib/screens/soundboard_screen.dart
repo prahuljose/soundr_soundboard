@@ -20,6 +20,7 @@ import '../services/haptics.dart';
 import '../services/notification_service.dart';
 import '../services/quick_sounds.dart';
 import '../theme/app_colors.dart';
+import '../widgets/first_run_tour.dart';
 import '../widgets/share_card.dart' show soundrPlayStoreUrl;
 import '../widgets/sound_button.dart';
 import 'clip_editor_screen.dart';
@@ -239,6 +240,17 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
     if (mounted) setState(() => _ready = true);
     _syncQuickSounds();
+    _maybeShowTour();
+  }
+
+  /// First launch only: the three-card intro, once the board is on screen.
+  void _maybeShowTour() {
+    if (AppSettings.tourSeen) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await showFirstRunTour(context);
+      await AppSettings.markTourSeen();
+    });
   }
 
   Future<void> _loadUserClips() async {

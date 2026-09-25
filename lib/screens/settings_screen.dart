@@ -5,6 +5,7 @@ import '../services/app_settings.dart';
 import '../services/haptics.dart';
 import '../services/quick_sounds.dart';
 import '../theme/app_colors.dart';
+import '../widgets/first_run_tour.dart';
 
 /// All app preferences in one place. Opened from the drawer.
 class SettingsScreen extends StatefulWidget {
@@ -314,6 +315,17 @@ class _SettingsScreenState extends State<SettingsScreen>
               title: 'Add Quick Settings tile',
               subtitle: 'A random favourite, one swipe down',
               onTap: _addTile,
+            ),
+          ]),
+
+          // ── Help ──────────────────────────────────────────────────────────
+          const _SectionLabel('HELP'),
+          _Card(children: [
+            _TapRow(
+              icon: Icons.auto_awesome_rounded,
+              title: 'Replay intro tour',
+              subtitle: 'Tap, long-press, and where the tools live',
+              onTap: () => showFirstRunTour(context),
             ),
           ]),
 
