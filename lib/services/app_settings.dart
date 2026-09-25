@@ -49,6 +49,9 @@ class AppSettings {
   static final accent = ValueNotifier<Color>(defaultAccent);
   static final gridDensity = ValueNotifier(GridDensity.normal);
 
+  /// Bottom tabs (true) or the original side menu (false).
+  static final useTabs = ValueNotifier(true);
+
   /// Whether the first-run tour has been shown (or skipped).
   static bool tourSeen = false;
 
@@ -56,6 +59,7 @@ class AppSettings {
   static const _kAccent = 'accent_color';
   static const _kGrid = 'grid_density';
   static const _kTour = 'tour_seen';
+  static const _kTabs = 'nav_bottom_tabs';
 
   static Future<void> load() async {
     try {
@@ -66,6 +70,7 @@ class AppSettings {
       gridDensity.value =
           GridDensity.fromName(await ClipRepository.getString(_kGrid));
       tourSeen = await ClipRepository.getBool(_kTour);
+      useTabs.value = await ClipRepository.getBool(_kTabs, defaultValue: true);
     } catch (_) {/* first launch or DB unavailable — keep defaults */}
 
     themeMode.addListener(() => _save(() => ClipRepository.setString(
@@ -74,6 +79,8 @@ class AppSettings {
         () => ClipRepository.setInt(_kAccent, accent.value.toARGB32())));
     gridDensity.addListener(() => _save(
         () => ClipRepository.setString(_kGrid, gridDensity.value.name)));
+    useTabs.addListener(
+        () => _save(() => ClipRepository.setBool(_kTabs, useTabs.value)));
   }
 
   static Future<void> markTourSeen() async {

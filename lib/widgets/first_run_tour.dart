@@ -480,7 +480,7 @@ class _TabsArt extends StatelessWidget {
     final c = Theme.of(context).extension<AppColors>()!;
     const tabs = [
       (Icons.grid_view_rounded, 'Sounds'),
-      (Icons.self_improvement_rounded, 'Tools'),
+      (Icons.handyman_rounded, 'Tools'),
       (Icons.sports_esports_rounded, 'Games'),
       (Icons.settings_rounded, 'Settings'),
     ];

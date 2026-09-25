@@ -29,6 +29,7 @@ import 'metronome_screen.dart';
 import 'spectrum_screen.dart';
 import 'voice_memo_screen.dart';
 import 'hearing_check_screen.dart';
+import 'hub_screens.dart';
 import 'morse_screen.dart';
 import 'morse_soundr_screen.dart';
 import 'morse_tapper_quiz_screen.dart';
@@ -92,6 +93,10 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   // Scenes / boards
   List<SceneModel> _scenes = [];
   Map<String, Set<String>> _sceneSoundIds = {}; // sceneId → sound IDs in scene
+
+  // Bottom-tab navigation (when AppSettings.useTabs is on).
+  int _tab = 0;
+  static const _tabSounds = 0;
 
   // Back-button guard
   DateTime? _lastBackPress;
@@ -248,7 +253,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     if (AppSettings.tourSeen) return;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      await showFirstRunTour(context);
+      await showFirstRunTour(context, tabs: AppSettings.useTabs.value);
       await AppSettings.markTourSeen();
     });
   }
@@ -1817,11 +1822,38 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: AppSettings.useTabs,
+      builder: (context, tabs, _) => _buildShell(tabs),
+    );
+  }
+
+  /// [tabs] picks the navigation style: bottom tabs, or the original drawer.
+  Widget _buildShell(bool tabs) {
     final c = Theme.of(context).extension<AppColors>()!;
+    final tab = tabs ? _tab : _tabSounds;
+    final soundsBody = _ready
+        ? Stack(
+            children: [
+              _buildBody(),
+              Positioned(
+                right: 16,
+                bottom: 24,
+                child: _buildFabs(),
+              ),
+            ],
+          )
+        : _buildLoadingScreen();
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        // Back from another tab returns to the soundboard first.
+        if (tab != _tabSounds) {
+          setState(() => _tab = _tabSounds);
+          return;
+        }
         final now = DateTime.now();
         if (_lastBackPress == null ||
             now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
@@ -1850,21 +1882,154 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         }
       },
       child: Scaffold(
-        drawer: _ready ? _buildDrawer(c) : null,
-        appBar: _buildAppBar(),
-        body: _ready
-            ? Stack(
+        drawer: _ready && !tabs ? _buildDrawer(c) : null,
+        // Other tabs bring their own app bars.
+        appBar: tab == _tabSounds ? _buildAppBar() : null,
+        body: !_ready || !tabs
+            ? soundsBody
+            : IndexedStack(
+                index: tab,
                 children: [
-                  _buildBody(),
-                  Positioned(
-                    right: 16,
-                    bottom: 24,
-                    child: _buildFabs(),
-                  ),
+                  soundsBody,
+                  _buildToolsHub(),
+                  _buildGamesHub(),
+                  const SettingsScreen(),
                 ],
+              ),
+        bottomNavigationBar: _ready && tabs
+            ? SoundrNavBar(
+                selectedIndex: tab,
+                onSelected: (i) {
+                  if (i == tab) return;
+                  Haptics.selection();
+                  setState(() => _tab = i);
+                },
               )
-            : _buildLoadingScreen(),
+            : null,
       ),
+    );
+  }
+
+  // ── Bottom tabs ───────────────────────────────────────────────────────────
+
+  Future<void> _open(Widget screen) =>
+      Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+
+  Widget _buildToolsHub() {
+    final accent = Theme.of(context).colorScheme.primary;
+    return ToolsHub(
+      zen: HubItem(
+        icon: Icons.self_improvement_rounded,
+        color: const Color(0xFF5DCAA5),
+        title: 'Zen Mode',
+        subtitle: 'Mix rain, waves, fire and more into your own calm soundscape',
+        onOpen: () => _open(const ZenScreen()),
+      ),
+      morse: [
+        HubItem(
+          icon: Icons.radio_rounded,
+          color: accent,
+          title: 'Morse Tapper',
+          subtitle: 'Tap it out and watch it decode',
+          onOpen: () => _open(MorseScreen(
+            dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+          )),
+        ),
+        HubItem(
+          icon: Icons.rss_feed_rounded,
+          color: accent,
+          title: 'Morse Soundr',
+          subtitle: 'Type a message — hear it or flash it',
+          onOpen: () => _open(MorseSoundrScreen(
+            dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+          )),
+        ),
+      ],
+      tools: [
+        HubItem(
+          icon: Icons.graphic_eq_rounded,
+          color: const Color(0xFFFF9F50),
+          title: 'Decibel Meter',
+          subtitle: 'How loud is it right now?',
+          onOpen: () => _open(const DecibelScreen()),
+        ),
+        HubItem(
+          icon: Icons.timer_rounded,
+          color: const Color(0xFFFFD166),
+          title: 'Metronome',
+          subtitle: 'Keep time at any tempo',
+          onOpen: () => _open(const MetronomeScreen()),
+        ),
+        HubItem(
+          icon: Icons.equalizer_rounded,
+          color: const Color(0xFFFF9FF0),
+          title: 'Spectrum',
+          subtitle: 'See every frequency, live',
+          onOpen: () => _open(const SpectrumScreen()),
+        ),
+        HubItem(
+          icon: Icons.mic_outlined,
+          color: const Color(0xFF64C8FF),
+          title: 'Voice Memo',
+          subtitle: 'Quick recordings, kept on your phone',
+          onOpen: () => _open(const VoiceMemoScreen()),
+        ),
+        HubItem(
+          icon: Icons.hearing_rounded,
+          color: const Color(0xFF9F8FF0),
+          title: 'Hearing Check',
+          subtitle: 'Find your hearing age',
+          onOpen: () => _open(const HearingCheckScreen()),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGamesHub() {
+    final accent = Theme.of(context).colorScheme.primary;
+    return GamesHub(
+      speedRound: HubItem(
+        icon: Icons.bolt_rounded,
+        color: const Color(0xFFFFC857),
+        title: 'Speed Round',
+        subtitle: 'Name the sound before time runs out',
+        onOpen: () => _open(SpeedRoundScreen(
+          sounds: _allSounds,
+          preloaded: _preloaded,
+        )),
+      ),
+      pairMatch: HubItem(
+        icon: Icons.grid_on_rounded,
+        color: const Color(0xFF7DDB86),
+        title: 'Pair Match',
+        subtitle: 'Flip cards and match the sounds by ear',
+        onOpen: () => _open(PairMatchScreen(
+          sounds: _allSounds,
+          preloaded: _preloaded,
+        )),
+      ),
+      morseGames: [
+        HubItem(
+          icon: Icons.quiz_rounded,
+          color: accent,
+          title: 'Tapper Quiz',
+          subtitle: 'See a letter, tap it in Morse',
+          onOpen: () => _open(MorseTapperQuizScreen(
+            dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+            correctSource: _preloaded['s45'],  // UI Success Chime
+            wrongSource: _preloaded['s44'],    // UI Click Soft
+          )),
+        ),
+        HubItem(
+          icon: Icons.hearing_rounded,
+          color: accent,
+          title: 'Soundr Quiz',
+          subtitle: 'Hear the Morse, type what it says',
+          onOpen: () => _open(MorseSoundrQuizScreen(
+            dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+          )),
+        ),
+      ],
     );
   }
 

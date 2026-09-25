@@ -224,6 +224,23 @@ class _SettingsScreenState extends State<SettingsScreen>
             ),
           ]),
 
+          // ── Navigation ────────────────────────────────────────────────────
+          const _SectionLabel('NAVIGATION'),
+          _Card(children: [
+            ValueListenableBuilder<bool>(
+              valueListenable: AppSettings.useTabs,
+              builder: (context, tabs, _) => _SwitchRow(
+                icon: tabs ? Icons.space_dashboard_rounded : Icons.menu_rounded,
+                title: 'Bottom tabs',
+                subtitle: tabs
+                    ? 'Sounds, Tools, Games and Settings along the bottom'
+                    : 'Off — tools are in the side menu (swipe from the left)',
+                value: tabs,
+                onChanged: (v) => AppSettings.useTabs.value = v,
+              ),
+            ),
+          ]),
+
           // ── Soundboard ────────────────────────────────────────────────────
           const _SectionLabel('SOUNDBOARD'),
           _Card(children: [
@@ -325,7 +342,8 @@ class _SettingsScreenState extends State<SettingsScreen>
               icon: Icons.auto_awesome_rounded,
               title: 'Replay intro tour',
               subtitle: 'Tap, long-press, and where the tools live',
-              onTap: () => showFirstRunTour(context),
+              onTap: () => showFirstRunTour(context,
+                  tabs: AppSettings.useTabs.value),
             ),
           ]),
 
