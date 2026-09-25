@@ -3,6 +3,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../services/app_settings.dart';
 import '../services/haptics.dart';
+import '../services/quick_sounds.dart';
 import '../theme/app_colors.dart';
 
 /// All app preferences in one place. Opened from the drawer.
@@ -41,6 +42,94 @@ class _SettingsScreenState extends State<SettingsScreen>
       final s = await Permission.notification.status;
       if (mounted) setState(() => _notificationsGranted = s.isGranted);
     } catch (_) {}
+  }
+
+  // ── Home screen widget / Quick Settings tile ────────────────────────────────
+
+  Future<void> _addWidget() async {
+    if (await QuickSounds.canPinWidget() && await QuickSounds.pinWidget()) {
+      return; // the launcher shows its own "add widget" prompt
+    }
+    if (!mounted) return;
+    _showHowTo('Add the Soundr widget', const [
+      'Long-press an empty spot on your home screen.',
+      'Tap Widgets and find Soundr.',
+      'Drag "Soundr quick sounds" onto your home screen.',
+    ]);
+  }
+
+  Future<void> _addTile() async {
+    if (await QuickSounds.canAddTile()) {
+      final code = await QuickSounds.addTile();
+      if (!mounted) return;
+      if (code == 2) _snack('Soundr tile added to Quick Settings');
+      if (code == 1) _snack('The Soundr tile is already in your Quick Settings');
+      if (code != null && code >= 0) return; // added, already there, or declined
+    }
+    if (!mounted) return;
+    _showHowTo('Add the Quick Settings tile', const [
+      'Swipe down twice from the top of the screen.',
+      'Tap the pencil (edit) button.',
+      'Drag the Soundr tile into your active tiles.',
+    ]);
+  }
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showHowTo(String title, List<String> steps) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final accent = Theme.of(context).colorScheme.primary;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < steps.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 22,
+                      height: 22,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.16),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text('${i + 1}',
+                          style: TextStyle(
+                              color: accent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700)),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(steps[i],
+                          style: TextStyle(
+                              color: c.textSecondary, fontSize: 14, height: 1.4)),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -207,6 +296,24 @@ class _SettingsScreenState extends State<SettingsScreen>
                 await openAppSettings();
                 await _refreshNotificationStatus();
               },
+            ),
+          ]),
+
+          // ── Home screen ───────────────────────────────────────────────────
+          const _SectionLabel('HOME SCREEN'),
+          _Card(children: [
+            _TapRow(
+              icon: Icons.widgets_rounded,
+              title: 'Add home-screen widget',
+              subtitle: 'Play your favourites without opening Soundr',
+              onTap: _addWidget,
+            ),
+            _Divider(c),
+            _TapRow(
+              icon: Icons.bolt_rounded,
+              title: 'Add Quick Settings tile',
+              subtitle: 'A random favourite, one swipe down',
+              onTap: _addTile,
             ),
           ]),
 

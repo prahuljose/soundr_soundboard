@@ -44,6 +44,29 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Home-screen widget: tap-to-play quick sounds (favourites first). -->
+        <receiver
+            android:name=".QuickSoundsWidget"
+            android:exported="false"
+            android:label="@string/widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/quick_sounds_widget_info"/>
+        </receiver>
+        <!-- Quick Settings tile: plays a random favourite. -->
+        <service
+            android:name=".QuickSoundTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_soundr"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE"/>
+            </intent-filter>
+        </service>
         <!-- Strip the scheduled-notification receivers from
              flutter_local_notifications since we never schedule notifications. -->
         <receiver

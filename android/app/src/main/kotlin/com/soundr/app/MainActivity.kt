@@ -13,6 +13,8 @@ class MainActivity : FlutterActivity() {
         deviceFeatures = features
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.soundr.app/device")
             .setMethodCallHandler(features)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.soundr.app/quick")
+            .setMethodCallHandler(QuickSoundsChannel(applicationContext))
     }
 
     override fun onDestroy() {

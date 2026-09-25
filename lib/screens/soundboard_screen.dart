@@ -18,6 +18,7 @@ import '../services/app_settings.dart';
 import '../services/clip_repository.dart';
 import '../services/haptics.dart';
 import '../services/notification_service.dart';
+import '../services/quick_sounds.dart';
 import '../theme/app_colors.dart';
 import '../widgets/share_card.dart' show soundrPlayStoreUrl;
 import '../widgets/sound_button.dart';
@@ -46,7 +47,8 @@ class SoundboardScreen extends StatefulWidget {
   State<SoundboardScreen> createState() => _SoundboardScreenState();
 }
 
-class _SoundboardScreenState extends State<SoundboardScreen> {
+class _SoundboardScreenState extends State<SoundboardScreen>
+    with WidgetsBindingObserver {
   final Map<String, AudioSource> _preloaded = {};
   final Map<String, double> _durations = {};
   final List<SoundHandle> _activeHandles = [];
@@ -137,8 +139,27 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _init();
     _fetchDeviceId();
+  }
+
+  // Play counts change the widget's ordering, so refresh it on the way out
+  // rather than after every single tap.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) _syncQuickSounds();
+  }
+
+  /// Pushes the current favourites / most-played list to the home-screen
+  /// widget and Quick Settings tile.
+  void _syncQuickSounds() {
+    if (!_ready) return;
+    QuickSounds.sync(
+      all: _allSounds,
+      favorites: _favorites,
+      playCounts: _playCounts,
+    );
   }
 
   Future<void> _fetchDeviceId() async {
@@ -217,6 +238,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     } catch (_) {/* non-fatal */}
 
     if (mounted) setState(() => _ready = true);
+    _syncQuickSounds();
   }
 
   Future<void> _loadUserClips() async {
@@ -258,6 +280,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stopOnTapTimer?.cancel();
     _searchController.dispose();
     _drawerScrollController.dispose();
@@ -1348,6 +1371,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     } else {
       await ClipRepository.addFavorite(sound.id);
     }
+    _syncQuickSounds();
   }
 
   // ── Stop-on-tap ───────────────────────────────────────────────────────────
@@ -1562,6 +1586,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
       final idx = _userClips.indexWhere((c) => c.id == clip.id);
       if (idx != -1) _userClips[idx] = updated;
     });
+    _syncQuickSounds();
   }
 
   Future<void> _shareClip(SoundModel clip) async {
@@ -1633,6 +1658,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
         _selectedCategory = 'All';
       }
     });
+    _syncQuickSounds();
   }
 
   // ── Color picker ─────────────────────────────────────────────────────────
