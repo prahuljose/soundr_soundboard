@@ -682,7 +682,10 @@ class _NavOption extends StatelessWidget {
     final sketch = Container(
       width: 46,
       height: 64,
-      decoration: BoxDecoration(
+      // Clip the contents to the rounded shape, then draw the outline in the
+      // foreground so the drawer panel / tab strip can't paint over it.
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
+      foregroundDecoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: ink, width: 1.5),
       ),
