@@ -75,6 +75,12 @@ class _SettingsScreenState extends State<SettingsScreen>
     ]);
   }
 
+  void _setNavStyle({required bool tabs}) {
+    if (AppSettings.useTabs.value == tabs) return;
+    Haptics.selection();
+    AppSettings.useTabs.value = tabs;
+  }
+
   void _snack(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -227,16 +233,42 @@ class _SettingsScreenState extends State<SettingsScreen>
           // ── Navigation ────────────────────────────────────────────────────
           const _SectionLabel('NAVIGATION'),
           _Card(children: [
-            ValueListenableBuilder<bool>(
-              valueListenable: AppSettings.useTabs,
-              builder: (context, tabs, _) => _SwitchRow(
-                icon: tabs ? Icons.space_dashboard_rounded : Icons.menu_rounded,
-                title: 'Bottom tabs',
-                subtitle: tabs
-                    ? 'Sounds, Tools, Games and Settings along the bottom'
-                    : 'Off — tools are in the side menu (swipe from the left)',
-                value: tabs,
-                onChanged: (v) => AppSettings.useTabs.value = v,
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Menu style',
+                      style: TextStyle(color: c.textPrimary, fontSize: 15)),
+                  const SizedBox(height: 2),
+                  Text('Where Zen Mode, Morse, games and tools live',
+                      style: TextStyle(color: c.textMuted, fontSize: 12)),
+                  const SizedBox(height: 14),
+                  ValueListenableBuilder<bool>(
+                    valueListenable: AppSettings.useTabs,
+                    builder: (context, tabs, _) => Row(
+                      children: [
+                        Expanded(
+                          child: _NavOption(
+                            tabs: false,
+                            selected: !tabs,
+                            accent: accent,
+                            onTap: () => _setNavStyle(tabs: false),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _NavOption(
+                            tabs: true,
+                            selected: tabs,
+                            accent: accent,
+                            onTap: () => _setNavStyle(tabs: true),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
           ]),
@@ -592,6 +624,167 @@ class _DensityOption extends StatelessWidget {
                     fontSize: 13,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                   ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// "Side menu" or "Bottom tabs", each drawn as a tiny phone sketch.
+class _NavOption extends StatelessWidget {
+  final bool tabs;
+  final bool selected;
+  final Color accent;
+  final VoidCallback onTap;
+
+  const _NavOption({
+    required this.tabs,
+    required this.selected,
+    required this.accent,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final ink = selected ? accent : c.textPrimary.withValues(alpha: 0.28);
+    final faint = selected
+        ? accent.withValues(alpha: 0.28)
+        : c.textPrimary.withValues(alpha: 0.10);
+    final label = tabs ? 'Bottom tabs' : 'Side menu';
+
+    Widget cells() => Column(
+          children: [
+            for (var r = 0; r < 2; r++) ...[
+              if (r > 0) const SizedBox(height: 3),
+              Row(children: [
+                for (var i = 0; i < 3; i++) ...[
+                  if (i > 0) const SizedBox(width: 3),
+                  Expanded(
+                    child: Container(
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: faint,
+                        borderRadius: BorderRadius.circular(2.5),
+                      ),
+                    ),
+                  ),
+                ],
+              ]),
+            ],
+          ],
+        );
+
+    final sketch = Container(
+      width: 46,
+      height: 64,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: ink, width: 1.5),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: tabs
+          ? Column(children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(5),
+                  child: cells(),
+                ),
+              ),
+              Container(
+                height: 11,
+                color: faint,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    for (var i = 0; i < 4; i++)
+                      Container(
+                        width: 5,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: i == 0 ? ink : ink.withValues(alpha: 0.45),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ])
+          : Stack(children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(5, 14, 5, 5),
+                child: cells(),
+              ),
+              // The drawer, half open over the grid.
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 24,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(4, 7, 4, 0),
+                  color: selected
+                      ? Color.lerp(c.surfaceCard, accent, 0.35)
+                      : c.surfaceElevated,
+                  child: Column(
+                    children: [
+                      for (var i = 0; i < 5; i++)
+                        Container(
+                          height: 3,
+                          margin: const EdgeInsets.only(bottom: 5),
+                          decoration: BoxDecoration(
+                            color: ink.withValues(alpha: i == 0 ? 1 : 0.55),
+                            borderRadius: BorderRadius.circular(1.5),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ]),
+    );
+
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.fromLTRB(10, 14, 10, 12),
+          decoration: BoxDecoration(
+            color: selected
+                ? accent.withValues(alpha: 0.12)
+                : c.surfaceElevated.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: selected ? accent : c.border,
+              width: selected ? 1.5 : 1,
+            ),
+          ),
+          child: ExcludeSemantics(
+            child: Column(
+              children: [
+                sketch,
+                const SizedBox(height: 10),
+                Text(
+                  label,
+                  style: TextStyle(
+                    color: selected ? accent : c.textSecondary,
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  tabs ? 'Tabs along the bottom' : 'Swipe from the left',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: c.textMuted, fontSize: 11),
                 ),
               ],
             ),

@@ -49,8 +49,9 @@ class AppSettings {
   static final accent = ValueNotifier<Color>(defaultAccent);
   static final gridDensity = ValueNotifier(GridDensity.normal);
 
-  /// Bottom tabs (true) or the original side menu (false).
-  static final useTabs = ValueNotifier(true);
+  /// Bottom tabs (true) or the side menu (false, the default). The user
+  /// picks in Settings > Navigation.
+  static final useTabs = ValueNotifier(false);
 
   /// Whether the first-run tour has been shown (or skipped).
   static bool tourSeen = false;
@@ -70,7 +71,7 @@ class AppSettings {
       gridDensity.value =
           GridDensity.fromName(await ClipRepository.getString(_kGrid));
       tourSeen = await ClipRepository.getBool(_kTour);
-      useTabs.value = await ClipRepository.getBool(_kTabs, defaultValue: true);
+      useTabs.value = await ClipRepository.getBool(_kTabs);
     } catch (_) {/* first launch or DB unavailable — keep defaults */}
 
     themeMode.addListener(() => _save(() => ClipRepository.setString(
