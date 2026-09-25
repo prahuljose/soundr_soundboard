@@ -1831,7 +1831,6 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   }
 
   Widget _buildDrawer(AppColors c) {
-    final isDark = widget.themeNotifier.value == ThemeMode.dark;
     final currentAccent = widget.accentNotifier.value;
 
     void nav(Widget screen) {
@@ -2016,195 +2015,16 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           ),
             Divider(color: c.borderSubtle, height: 1),
 
-            // ── App Preferences ──────────────────────────────────────────────
-            Row(children: [
-              const Expanded(child: _DrawerSectionLabel('APP PREFERENCES')),
-              Padding(
-                padding: const EdgeInsets.only(top: 10, right: 12),
-                child: TextButton.icon(
-                  onPressed: () => nav(const SettingsScreen()),
-                  icon: const Icon(Icons.tune_rounded, size: 16),
-                  label: const Text('All settings'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: currentAccent,
-                    visualDensity: VisualDensity.compact,
-                    textStyle: const TextStyle(
-                        fontSize: 12.5, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-            ]),
-
-            // Dark / Light toggle
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                child: Row(children: [
-                  Icon(
-                    isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-                    size: 20, color: c.iconSecondary,
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      isDark ? 'Dark mode' : 'Light mode',
-                      style: TextStyle(
-                        color: c.textSecondary, fontSize: 15,
-                      ),
-                    ),
-                  ),
-                  Switch(
-                    value: isDark,
-                    onChanged: (v) {
-                      widget.themeNotifier.value =
-                          v ? ThemeMode.dark : ThemeMode.light;
-                    },
-                    activeThumbColor: currentAccent,
-                    activeTrackColor: currentAccent.withValues(alpha: 0.4),
-                  ),
-                ]),
-              ),
+            // ── Settings ─────────────────────────────────────────────────────
+            // Theme, accent, button size, haptics and notifications all live
+            // on the Settings page, so the drawer just links to it.
+            const SizedBox(height: 6),
+            _DrawerItem(
+              icon: Icons.settings_rounded,
+              label: 'Settings',
+              onTap: () => nav(const SettingsScreen()),
             ),
-
-            // Haptics (vibration) toggle
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                child: Row(children: [
-                  Icon(
-                    Haptics.enabled
-                        ? Icons.vibration_rounded
-                        : Icons.smartphone_rounded,
-                    size: 20, color: c.iconSecondary,
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      'Haptics',
-                      style: TextStyle(color: c.textSecondary, fontSize: 15),
-                    ),
-                  ),
-                  Switch(
-                    value: Haptics.enabled,
-                    onChanged: (v) async {
-                      await Haptics.setEnabled(v);
-                      if (v) Haptics.selection();
-                      if (mounted) setState(() {});
-                    },
-                    activeThumbColor: currentAccent,
-                    activeTrackColor: currentAccent.withValues(alpha: 0.4),
-                  ),
-                ]),
-              ),
-            ),
-
-            // Notifications — permanent way to fix denial after the
-            // one-time SnackBar has been dismissed. Always tappable so users
-            // can also tweak channel settings even when granted.
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: () async {
-                  Navigator.pop(context); // close drawer
-                  await openAppSettings();
-                  // When user returns, re-check so the row reflects reality
-                  // and the one-time hint flag resets if newly enabled.
-                  try {
-                    final s = await Permission.notification.status;
-                    if (mounted) {
-                      setState(() {
-                        _notificationsGranted = s.isGranted;
-                        if (s.isGranted) _notificationHintShown = false;
-                      });
-                    }
-                  } catch (_) {}
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  child: Row(children: [
-                    Icon(
-                      _notificationsGranted
-                          ? Icons.notifications_active_rounded
-                          : Icons.notifications_off_rounded,
-                      size: 20,
-                      color: _notificationsGranted
-                          ? c.iconSecondary
-                          : Colors.redAccent.withValues(alpha: 0.85),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Notifications',
-                            style: TextStyle(
-                              color: c.textSecondary, fontSize: 15,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _notificationsGranted
-                                ? 'Enabled'
-                                : 'Disabled — tap to enable',
-                            style: TextStyle(
-                              color: _notificationsGranted
-                                  ? c.textMuted
-                                  : Colors.redAccent.withValues(alpha: 0.85),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(Icons.chevron_right_rounded,
-                        size: 20, color: c.iconSecondary),
-                  ]),
-                ),
-              ),
-            ),
-
-            // Accent colour
-            Padding(
-              padding: const EdgeInsets.fromLTRB(26, 6, 20, 4),
-              child: Text('Accent colour', style: TextStyle(
-                color: c.textSecondary, fontSize: 13, fontWeight: FontWeight.w500,
-              )),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: AppSettings.accentPresets.map((color) {
-                  final selected = currentAccent == color;
-                  return GestureDetector(
-                    onTap: () => widget.accentNotifier.value = color,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      width: 36, height: 36,
-                      decoration: BoxDecoration(
-                        color: color,
-                        shape: BoxShape.circle,
-                        border: selected
-                            ? Border.all(color: c.textPrimary, width: 2.5)
-                            : Border.all(color: Colors.transparent, width: 2.5),
-                        boxShadow: selected
-                            ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8)]
-                            : [],
-                      ),
-                      child: selected
-                          ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
-                          : null,
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-
+            const SizedBox(height: 6),
             Divider(color: c.borderSubtle, height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
