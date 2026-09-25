@@ -3,6 +3,4 @@
     <string name="widget_label">Soundr quick sounds</string>
     <string name="widget_description">Tap your favourite sounds right from the home screen</string>
     <string name="widget_empty">Open Soundr to load your quick sounds</string>
-    <string name="tile_label">Soundr</string>
-    <string name="tile_subtitle">Random favourite</string>
 </resources>

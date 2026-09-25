@@ -5,8 +5,8 @@ import 'package:flutter/services.dart';
 
 import '../models/sound_model.dart';
 
-/// Feeds the home-screen widget and the Quick Settings tile (both native —
-/// see android/.../QuickSounds*.kt) over the `com.soundr.app/quick` channel.
+/// Feeds the native home-screen widget (android/.../QuickSounds*.kt) over the
+/// `com.soundr.app/quick` channel.
 class QuickSounds {
   QuickSounds._();
 
@@ -60,12 +60,11 @@ class QuickSounds {
           'path': s.isUserClip ? (s.filePath ?? '') : '',
           'startMs': _trimmed(s) ? (s.trimStart * 1000).round() : 0,
           'endMs': _trimmed(s) ? (s.trimEnd * 1000).round() : 0,
-          'favorite': favorites.contains(s.id),
         },
     ]);
     try {
       await _channel.invokeMethod('syncQuickSounds', {'json': json});
-    } catch (_) {/* widget/tile are a bonus — never break the app */}
+    } catch (_) {/* the widget is a bonus — never break the app */}
   }
 
   static bool _trimmed(SoundModel s) => s.isUserClip && s.trimEnd > s.trimStart;
@@ -75,19 +74,6 @@ class QuickSounds {
 
   /// Shows the system "add widget to home screen" prompt.
   static Future<bool> pinWidget() => _bool('pinWidget');
-
-  /// Android 13+: whether the "add Quick Settings tile" prompt exists.
-  static Future<bool> canAddTile() => _bool('canAddTile');
-
-  /// Shows the system tile prompt. Returns the StatusBarManager result code:
-  /// 2 = added, 1 = already added, 0 = declined; null if unsupported.
-  static Future<int?> addTile() async {
-    try {
-      return await _channel.invokeMethod<int>('addTile');
-    } catch (_) {
-      return null;
-    }
-  }
 
   static Future<bool> _bool(String method) async {
     try {

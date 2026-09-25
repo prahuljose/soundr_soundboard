@@ -45,7 +45,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     } catch (_) {}
   }
 
-  // ── Home screen widget / Quick Settings tile ────────────────────────────────
+  // ── Home screen widget ──────────────────────────────────────────────────────
 
   Future<void> _addWidget() async {
     if (await QuickSounds.canPinWidget() && await QuickSounds.pinWidget()) {
@@ -59,32 +59,10 @@ class _SettingsScreenState extends State<SettingsScreen>
     ]);
   }
 
-  Future<void> _addTile() async {
-    if (await QuickSounds.canAddTile()) {
-      final code = await QuickSounds.addTile();
-      if (!mounted) return;
-      if (code == 2) _snack('Soundr tile added to Quick Settings');
-      if (code == 1) _snack('The Soundr tile is already in your Quick Settings');
-      if (code != null && code >= 0) return; // added, already there, or declined
-    }
-    if (!mounted) return;
-    _showHowTo('Add the Quick Settings tile', const [
-      'Swipe down twice from the top of the screen.',
-      'Tap the pencil (edit) button.',
-      'Drag the Soundr tile into your active tiles.',
-    ]);
-  }
-
   void _setNavStyle({required bool tabs}) {
     if (AppSettings.useTabs.value == tabs) return;
     Haptics.selection();
     AppSettings.useTabs.value = tabs;
-  }
-
-  void _snack(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _showHowTo(String title, List<String> steps) {
@@ -358,13 +336,7 @@ class _SettingsScreenState extends State<SettingsScreen>
               subtitle: 'Play your favourites without opening Soundr',
               onTap: _addWidget,
             ),
-            _Divider(c),
-            _TapRow(
-              icon: Icons.bolt_rounded,
-              title: 'Add Quick Settings tile',
-              subtitle: 'A random favourite, one swipe down',
-              onTap: _addTile,
-            ),
+
           ]),
 
           // ── Help ──────────────────────────────────────────────────────────

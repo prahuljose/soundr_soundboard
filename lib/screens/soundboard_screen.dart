@@ -158,7 +158,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   }
 
   /// Pushes the current favourites / most-played list to the home-screen
-  /// widget and Quick Settings tile.
+  /// widget.
   void _syncQuickSounds() {
     if (!_ready) return;
     QuickSounds.sync(

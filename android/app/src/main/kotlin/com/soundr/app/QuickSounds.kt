@@ -10,7 +10,7 @@ import org.json.JSONArray
 import java.io.File
 
 /**
- * One sound the home-screen widget and Quick Settings tile can play.
+ * One sound the home-screen widget can play.
  * [asset] is a Flutter asset key (built-in sounds); [path] is a file on disk
  * (the user's own clips). Trim points are in milliseconds.
  */
@@ -22,12 +22,12 @@ data class QuickSound(
     val path: String?,
     val startMs: Int,
     val endMs: Int,
-    val favorite: Boolean,
 )
 
 /**
- * The list Flutter hands over via [QuickSoundsChannel] — favourites first,
- * then most-played, then a few starters, so the widget is never empty.
+ * The list Flutter hands over via [QuickSoundsChannel]: the user's own picks
+ * (Settings → Choose widget sounds), or favourites first, then most-played,
+ * then a few starters, so the widget is never empty.
  */
 object QuickSoundStore {
     private const val PREFS = "soundr_quick_sounds"
@@ -53,7 +53,6 @@ object QuickSoundStore {
                     path = o.optString("path").ifEmpty { null },
                     startMs = o.optInt("startMs", 0),
                     endMs = o.optInt("endMs", 0),
-                    favorite = o.optBoolean("favorite", false),
                 )
             }
         } catch (e: Exception) {
@@ -64,7 +63,7 @@ object QuickSoundStore {
 
 /**
  * Plays one quick sound at a time with MediaPlayer, straight from the APK's
- * Flutter assets — no Flutter engine needed, so widget and tile taps are
+ * Flutter assets — no Flutter engine needed, so widget taps are
  * instant even when the app isn't running.
  */
 object QuickSoundPlayer {
