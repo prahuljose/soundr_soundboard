@@ -14,10 +14,14 @@ import 'package:permission_handler/permission_handler.dart';
 import '../data/sounds_data.dart';
 import '../models/scene_model.dart';
 import '../models/sound_model.dart';
+import '../services/app_settings.dart';
 import '../services/clip_repository.dart';
 import '../services/haptics.dart';
 import '../services/notification_service.dart';
+import '../services/quick_sounds.dart';
 import '../theme/app_colors.dart';
+import '../widgets/first_run_tour.dart';
+import '../widgets/share_card.dart' show soundrPlayStoreUrl;
 import '../widgets/sound_button.dart';
 import 'clip_editor_screen.dart';
 import 'decibel_screen.dart';
@@ -25,11 +29,13 @@ import 'metronome_screen.dart';
 import 'spectrum_screen.dart';
 import 'voice_memo_screen.dart';
 import 'hearing_check_screen.dart';
+import 'hub_screens.dart';
 import 'morse_screen.dart';
 import 'morse_soundr_screen.dart';
 import 'morse_tapper_quiz_screen.dart';
 import 'morse_soundr_quiz_screen.dart';
 import 'record_screen.dart';
+import 'settings_screen.dart';
 import 'speed_round_screen.dart';
 import 'pair_match_screen.dart';
 import 'zen_screen.dart';
@@ -43,7 +49,8 @@ class SoundboardScreen extends StatefulWidget {
   State<SoundboardScreen> createState() => _SoundboardScreenState();
 }
 
-class _SoundboardScreenState extends State<SoundboardScreen> {
+class _SoundboardScreenState extends State<SoundboardScreen>
+    with WidgetsBindingObserver {
   final Map<String, AudioSource> _preloaded = {};
   final Map<String, double> _durations = {};
   final List<SoundHandle> _activeHandles = [];
@@ -86,6 +93,10 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   // Scenes / boards
   List<SceneModel> _scenes = [];
   Map<String, Set<String>> _sceneSoundIds = {}; // sceneId → sound IDs in scene
+
+  // Bottom-tab navigation (when AppSettings.useTabs is on).
+  int _tab = 0;
+  static const _tabSounds = 0;
 
   // Back-button guard
   DateTime? _lastBackPress;
@@ -134,8 +145,27 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _init();
     _fetchDeviceId();
+  }
+
+  // Play counts change the widget's ordering, so refresh it on the way out
+  // rather than after every single tap.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) _syncQuickSounds();
+  }
+
+  /// Pushes the current favourites / most-played list to the home-screen
+  /// widget.
+  void _syncQuickSounds() {
+    if (!_ready) return;
+    QuickSounds.sync(
+      all: _allSounds,
+      favorites: _favorites,
+      playCounts: _playCounts,
+    );
   }
 
   Future<void> _fetchDeviceId() async {
@@ -214,6 +244,18 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     } catch (_) {/* non-fatal */}
 
     if (mounted) setState(() => _ready = true);
+    _syncQuickSounds();
+    _maybeShowTour();
+  }
+
+  /// First launch only: the three-card intro, once the board is on screen.
+  void _maybeShowTour() {
+    if (AppSettings.tourSeen) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await showFirstRunTour(context, tabs: AppSettings.useTabs.value);
+      await AppSettings.markTourSeen();
+    });
   }
 
   Future<void> _loadUserClips() async {
@@ -255,6 +297,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stopOnTapTimer?.cancel();
     _searchController.dispose();
     _drawerScrollController.dispose();
@@ -959,7 +1002,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     // Basic URL validation
     final uri = Uri.tryParse(url);
     if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
-      _showUrlError('Invalid URL — make sure it starts with https://');
+      _showMessage('Invalid URL — make sure it starts with https://');
       return;
     }
 
@@ -1047,12 +1090,12 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     Navigator.pop(context); // dismiss loading
 
     if (errorMessage != null) {
-      _showUrlError(errorMessage);
+      _showMessage(errorMessage);
       return;
     }
 
     if (filePath == null) {
-      _showUrlError('Download failed — check the URL and try again');
+      _showMessage('Download failed — check the URL and try again');
       return;
     }
 
@@ -1068,7 +1111,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     setState(() => _userClips = updated);
   }
 
-  void _showUrlError(String message) {
+  void _showMessage(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -1345,6 +1388,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
     } else {
       await ClipRepository.addFavorite(sound.id);
     }
+    _syncQuickSounds();
   }
 
   // ── Stop-on-tap ───────────────────────────────────────────────────────────
@@ -1458,6 +1502,11 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
               onTap: () { Navigator.pop(ctx); _toggleFavorite(sound); },
             ),
             _SheetOption(
+              icon: Icons.share_rounded,
+              label: 'Share sound',
+              onTap: () { Navigator.pop(ctx); _shareSound(sound); },
+            ),
+            _SheetOption(
               icon: Icons.dashboard_customize_rounded,
               label: 'Manage boards',
               onTap: () { Navigator.pop(ctx); _showManageBoardsSheet(sound); },
@@ -1554,11 +1603,40 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
       final idx = _userClips.indexWhere((c) => c.id == clip.id);
       if (idx != -1) _userClips[idx] = updated;
     });
+    _syncQuickSounds();
   }
 
   Future<void> _shareClip(SoundModel clip) async {
     if (clip.filePath == null) return;
-    await Share.shareXFiles([XFile(clip.filePath!)], text: clip.name);
+    await Share.shareXFiles([XFile(clip.filePath!)], text: _shareText(clip));
+  }
+
+  String _shareText(SoundModel sound) =>
+      '${sound.emoji} ${sound.name} — sent from Soundr\n$soundrPlayStoreUrl';
+
+  /// Shares a built-in sound as an audio file. Assets live inside the APK, so
+  /// the bytes are copied to a temp file named after the sound — chat apps
+  /// show that filename, so "Emotional Damage.wav" beats "s30.wav".
+  Future<void> _shareSound(SoundModel sound) async {
+    try {
+      final data = await rootBundle.load('assets/sounds/raw/${sound.file}');
+      final ext = sound.file.split('.').last.toLowerCase();
+      var safeName = sound.name
+          .replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      if (safeName.isEmpty) safeName = 'Soundr sound';
+      final dir = Directory('${(await getTemporaryDirectory()).path}/share');
+      await dir.create(recursive: true);
+      final file = File('${dir.path}/$safeName.$ext');
+      await file.writeAsBytes(data.buffer.asUint8List(), flush: true);
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: ext == 'mp3' ? 'audio/mpeg' : 'audio/wav')],
+        text: _shareText(sound),
+      );
+    } catch (_) {
+      _showMessage('Couldn’t share “${sound.name}” — try again');
+    }
   }
 
   Future<void> _deleteUserClip(SoundModel clip) async {
@@ -1597,6 +1675,7 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
         _selectedCategory = 'All';
       }
     });
+    _syncQuickSounds();
   }
 
   // ── Color picker ─────────────────────────────────────────────────────────
@@ -1743,11 +1822,38 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: AppSettings.useTabs,
+      builder: (context, tabs, _) => _buildShell(tabs),
+    );
+  }
+
+  /// [tabs] picks the navigation style: bottom tabs, or the original drawer.
+  Widget _buildShell(bool tabs) {
     final c = Theme.of(context).extension<AppColors>()!;
+    final tab = tabs ? _tab : _tabSounds;
+    final soundsBody = _ready
+        ? Stack(
+            children: [
+              _buildBody(),
+              Positioned(
+                right: 16,
+                bottom: 24,
+                child: _buildFabs(),
+              ),
+            ],
+          )
+        : _buildLoadingScreen();
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
+        // Back from another tab returns to the soundboard first.
+        if (tab != _tabSounds) {
+          setState(() => _tab = _tabSounds);
+          return;
+        }
         final now = DateTime.now();
         if (_lastBackPress == null ||
             now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
@@ -1776,35 +1882,158 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
         }
       },
       child: Scaffold(
-        drawer: _ready ? _buildDrawer(c) : null,
-        appBar: _buildAppBar(),
-        body: _ready
-            ? Stack(
+        drawer: _ready && !tabs ? _buildDrawer(c) : null,
+        // Other tabs bring their own app bars.
+        appBar: tab == _tabSounds ? _buildAppBar() : null,
+        body: !_ready || !tabs
+            ? soundsBody
+            : IndexedStack(
+                index: tab,
                 children: [
-                  _buildBody(),
-                  Positioned(
-                    right: 16,
-                    bottom: 24,
-                    child: _buildFabs(),
-                  ),
+                  soundsBody,
+                  _buildToolsHub(),
+                  _buildGamesHub(),
+                  const SettingsScreen(),
                 ],
+              ),
+        bottomNavigationBar: _ready && tabs
+            ? SoundrNavBar(
+                selectedIndex: tab,
+                onSelected: (i) {
+                  if (i == tab) return;
+                  Haptics.selection();
+                  setState(() => _tab = i);
+                },
               )
-            : _buildLoadingScreen(),
+            : null,
       ),
     );
   }
 
-  static const _accentPresets = [
-    Color(0xFF6C63FF),
-    Color(0xFF2196F3),
-    Color(0xFF00BCD4),
-    Color(0xFF4CAF50),
-    Color(0xFFFF9800),
-    Color(0xFFE91E63),
-  ];
+  // ── Bottom tabs ───────────────────────────────────────────────────────────
+
+  Future<void> _open(Widget screen) =>
+      Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+
+  Widget _buildToolsHub() {
+    final accent = Theme.of(context).colorScheme.primary;
+    return ToolsHub(
+      zen: HubItem(
+        icon: Icons.self_improvement_rounded,
+        color: const Color(0xFF5DCAA5),
+        title: 'Zen Mode',
+        subtitle: 'Mix rain, waves, fire and more into your own calm soundscape',
+        onOpen: () => _open(const ZenScreen()),
+      ),
+      morse: [
+        HubItem(
+          icon: Icons.radio_rounded,
+          color: accent,
+          title: 'Morse Tapper',
+          subtitle: 'Tap it out and watch it decode',
+          onOpen: () => _open(MorseScreen(
+            dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+          )),
+        ),
+        HubItem(
+          icon: Icons.rss_feed_rounded,
+          color: accent,
+          title: 'Morse Soundr',
+          subtitle: 'Type a message — hear it or flash it',
+          onOpen: () => _open(MorseSoundrScreen(
+            dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+          )),
+        ),
+      ],
+      tools: [
+        HubItem(
+          icon: Icons.graphic_eq_rounded,
+          color: const Color(0xFFFF9F50),
+          title: 'Decibel Meter',
+          subtitle: 'How loud is it right now?',
+          onOpen: () => _open(const DecibelScreen()),
+        ),
+        HubItem(
+          icon: Icons.timer_rounded,
+          color: const Color(0xFFFFD166),
+          title: 'Metronome',
+          subtitle: 'Keep time at any tempo',
+          onOpen: () => _open(const MetronomeScreen()),
+        ),
+        HubItem(
+          icon: Icons.equalizer_rounded,
+          color: const Color(0xFFFF9FF0),
+          title: 'Spectrum',
+          subtitle: 'See every frequency, live',
+          onOpen: () => _open(const SpectrumScreen()),
+        ),
+        HubItem(
+          icon: Icons.mic_outlined,
+          color: const Color(0xFF64C8FF),
+          title: 'Voice Memo',
+          subtitle: 'Quick recordings, kept on your phone',
+          onOpen: () => _open(const VoiceMemoScreen()),
+        ),
+        HubItem(
+          icon: Icons.hearing_rounded,
+          color: const Color(0xFF9F8FF0),
+          title: 'Hearing Check',
+          subtitle: 'Find your hearing age',
+          onOpen: () => _open(const HearingCheckScreen()),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGamesHub() {
+    final accent = Theme.of(context).colorScheme.primary;
+    return GamesHub(
+      speedRound: HubItem(
+        icon: Icons.bolt_rounded,
+        color: const Color(0xFFFFC857),
+        title: 'Speed Round',
+        subtitle: 'Name the sound before time runs out',
+        onOpen: () => _open(SpeedRoundScreen(
+          sounds: _allSounds,
+          preloaded: _preloaded,
+        )),
+      ),
+      pairMatch: HubItem(
+        icon: Icons.grid_on_rounded,
+        color: const Color(0xFF7DDB86),
+        title: 'Pair Match',
+        subtitle: 'Flip cards and match the sounds by ear',
+        onOpen: () => _open(PairMatchScreen(
+          sounds: _allSounds,
+          preloaded: _preloaded,
+        )),
+      ),
+      morseGames: [
+        HubItem(
+          icon: Icons.quiz_rounded,
+          color: accent,
+          title: 'Tapper Quiz',
+          subtitle: 'See a letter, tap it in Morse',
+          onOpen: () => _open(MorseTapperQuizScreen(
+            dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+            correctSource: _preloaded['s45'],  // UI Success Chime
+            wrongSource: _preloaded['s44'],    // UI Click Soft
+          )),
+        ),
+        HubItem(
+          icon: Icons.hearing_rounded,
+          color: accent,
+          title: 'Soundr Quiz',
+          subtitle: 'Hear the Morse, type what it says',
+          onOpen: () => _open(MorseSoundrQuizScreen(
+            dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
+          )),
+        ),
+      ],
+    );
+  }
 
   Widget _buildDrawer(AppColors c) {
-    final isDark = widget.themeNotifier.value == ThemeMode.dark;
     final currentAccent = widget.accentNotifier.value;
 
     void nav(Widget screen) {
@@ -1989,179 +2218,16 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
           ),
             Divider(color: c.borderSubtle, height: 1),
 
-            // ── App Preferences ──────────────────────────────────────────────
-            _DrawerSectionLabel('APP PREFERENCES'),
-
-            // Dark / Light toggle
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                child: Row(children: [
-                  Icon(
-                    isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-                    size: 20, color: c.iconSecondary,
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      isDark ? 'Dark mode' : 'Light mode',
-                      style: TextStyle(
-                        color: c.textSecondary, fontSize: 15,
-                      ),
-                    ),
-                  ),
-                  Switch(
-                    value: isDark,
-                    onChanged: (v) {
-                      widget.themeNotifier.value =
-                          v ? ThemeMode.dark : ThemeMode.light;
-                    },
-                    activeThumbColor: currentAccent,
-                    activeTrackColor: currentAccent.withValues(alpha: 0.4),
-                  ),
-                ]),
-              ),
+            // ── Settings ─────────────────────────────────────────────────────
+            // Theme, accent, button size, haptics and notifications all live
+            // on the Settings page, so the drawer just links to it.
+            const SizedBox(height: 6),
+            _DrawerItem(
+              icon: Icons.settings_rounded,
+              label: 'Settings',
+              onTap: () => nav(const SettingsScreen()),
             ),
-
-            // Haptics (vibration) toggle
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                child: Row(children: [
-                  Icon(
-                    Haptics.enabled
-                        ? Icons.vibration_rounded
-                        : Icons.smartphone_rounded,
-                    size: 20, color: c.iconSecondary,
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      'Haptics',
-                      style: TextStyle(color: c.textSecondary, fontSize: 15),
-                    ),
-                  ),
-                  Switch(
-                    value: Haptics.enabled,
-                    onChanged: (v) async {
-                      await Haptics.setEnabled(v);
-                      if (v) Haptics.selection();
-                      if (mounted) setState(() {});
-                    },
-                    activeThumbColor: currentAccent,
-                    activeTrackColor: currentAccent.withValues(alpha: 0.4),
-                  ),
-                ]),
-              ),
-            ),
-
-            // Notifications — permanent way to fix denial after the
-            // one-time SnackBar has been dismissed. Always tappable so users
-            // can also tweak channel settings even when granted.
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: () async {
-                  Navigator.pop(context); // close drawer
-                  await openAppSettings();
-                  // When user returns, re-check so the row reflects reality
-                  // and the one-time hint flag resets if newly enabled.
-                  try {
-                    final s = await Permission.notification.status;
-                    if (mounted) {
-                      setState(() {
-                        _notificationsGranted = s.isGranted;
-                        if (s.isGranted) _notificationHintShown = false;
-                      });
-                    }
-                  } catch (_) {}
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  child: Row(children: [
-                    Icon(
-                      _notificationsGranted
-                          ? Icons.notifications_active_rounded
-                          : Icons.notifications_off_rounded,
-                      size: 20,
-                      color: _notificationsGranted
-                          ? c.iconSecondary
-                          : Colors.redAccent.withValues(alpha: 0.85),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Notifications',
-                            style: TextStyle(
-                              color: c.textSecondary, fontSize: 15,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _notificationsGranted
-                                ? 'Enabled'
-                                : 'Disabled — tap to enable',
-                            style: TextStyle(
-                              color: _notificationsGranted
-                                  ? c.textMuted
-                                  : Colors.redAccent.withValues(alpha: 0.85),
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(Icons.chevron_right_rounded,
-                        size: 20, color: c.iconSecondary),
-                  ]),
-                ),
-              ),
-            ),
-
-            // Accent colour
-            Padding(
-              padding: const EdgeInsets.fromLTRB(26, 6, 20, 4),
-              child: Text('Accent colour', style: TextStyle(
-                color: c.textSecondary, fontSize: 13, fontWeight: FontWeight.w500,
-              )),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: _accentPresets.map((color) {
-                  final selected = currentAccent == color;
-                  return GestureDetector(
-                    onTap: () => widget.accentNotifier.value = color,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      width: 36, height: 36,
-                      decoration: BoxDecoration(
-                        color: color,
-                        shape: BoxShape.circle,
-                        border: selected
-                            ? Border.all(color: c.textPrimary, width: 2.5)
-                            : Border.all(color: Colors.transparent, width: 2.5),
-                        boxShadow: selected
-                            ? [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 8)]
-                            : [],
-                      ),
-                      child: selected
-                          ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
-                          : null,
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-
+            const SizedBox(height: 6),
             Divider(color: c.borderSubtle, height: 1),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
@@ -2439,36 +2505,44 @@ class _SoundboardScreenState extends State<SoundboardScreen> {
                     key: ValueKey('empty_${_isSearching ? 'search' : _selectedCategory}'),
                     child: _buildEmptyState(),
                   )
-                : GridView.builder(
+                : ValueListenableBuilder<GridDensity>(
                     key: ValueKey(_isSearching ? 'search' : _selectedCategory),
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      childAspectRatio: 0.9,
-                    ),
-                    itemCount: _filtered.length,
-                    itemBuilder: (context, i) {
-                      final sound = _filtered[i];
-                      return GestureDetector(
-                        onLongPress: sound.isUserClip
-                            ? () => _showClipOptions(sound)
-                            : () => _showSoundOptions(sound),
-                        child: SoundButton(
-                          sound: sound,
-                          duration: _durations[sound.id] ?? 0,
-                          stopSignal: _stopSignal,
-                          stopOthersSignal: _stopOthersSignal,
-                          excludeFromStopOthers:
-                              _stopOnTapExcludeId == sound.id,
-                          isFavorited: _favorites.contains(sound.id),
-                          onFavoriteToggle: () => _toggleFavorite(sound),
-                          onTap: () => _play(sound),
-                          playCount: _playCounts[sound.id] ?? 0,
-                          highlightQuery: _isSearching ? _searchQuery : '',
+                    valueListenable: AppSettings.gridDensity,
+                    builder: (context, density, _) {
+                      final gap = density == GridDensity.compact ? 8.0 : 10.0;
+                      return GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                        // Max-extent (not a fixed count) so landscape phones
+                        // and tablets get more columns automatically.
+                        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: density.maxExtent,
+                          crossAxisSpacing: gap,
+                          mainAxisSpacing: gap,
+                          mainAxisExtent: density.tileHeight,
                         ),
+                        itemCount: _filtered.length,
+                        itemBuilder: (context, i) {
+                          final sound = _filtered[i];
+                          return GestureDetector(
+                            onLongPress: sound.isUserClip
+                                ? () => _showClipOptions(sound)
+                                : () => _showSoundOptions(sound),
+                            child: SoundButton(
+                              sound: sound,
+                              duration: _durations[sound.id] ?? 0,
+                              stopSignal: _stopSignal,
+                              stopOthersSignal: _stopOthersSignal,
+                              excludeFromStopOthers:
+                                  _stopOnTapExcludeId == sound.id,
+                              isFavorited: _favorites.contains(sound.id),
+                              onFavoriteToggle: () => _toggleFavorite(sound),
+                              onTap: () => _play(sound),
+                              playCount: _playCounts[sound.id] ?? 0,
+                              highlightQuery: _isSearching ? _searchQuery : '',
+                              density: density,
+                            ),
+                          );
+                        },
                       );
                     },
                   ),

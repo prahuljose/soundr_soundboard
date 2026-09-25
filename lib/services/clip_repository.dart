@@ -102,6 +102,15 @@ class ClipRepository {
   // ── Settings (key/value) ───────────────────────────────────────────────────
 
   static Future<bool> getBool(String key, {bool defaultValue = false}) async {
+    final value = await getString(key);
+    if (value == null) return defaultValue;
+    return value == '1';
+  }
+
+  static Future<void> setBool(String key, bool value) =>
+      setString(key, value ? '1' : '0');
+
+  static Future<String?> getString(String key) async {
     final db = await _database;
     final rows = await db.query(
       'settings',
@@ -110,18 +119,24 @@ class ClipRepository {
       whereArgs: [key],
       limit: 1,
     );
-    if (rows.isEmpty) return defaultValue;
-    return rows.first['value'] == '1';
+    if (rows.isEmpty) return null;
+    return rows.first['value'] as String;
   }
 
-  static Future<void> setBool(String key, bool value) async {
+  static Future<void> setString(String key, String value) async {
     final db = await _database;
     await db.insert(
       'settings',
-      {'key': key, 'value': value ? '1' : '0'},
+      {'key': key, 'value': value},
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
+
+  static Future<int?> getInt(String key) async =>
+      int.tryParse(await getString(key) ?? '');
+
+  static Future<void> setInt(String key, int value) =>
+      setString(key, '$value');
 
   // ── Clips ────────────────────────────────────────────────────────────────
 

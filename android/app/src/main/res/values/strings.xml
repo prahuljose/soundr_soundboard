@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_label">Soundr quick sounds</string>
+    <string name="widget_description">Tap your favourite sounds right from the home screen</string>
+    <string name="widget_empty">Open Soundr to load your quick sounds</string>
+</resources>

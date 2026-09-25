@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 
 import '../models/sound_model.dart';
+import '../services/personal_bests.dart';
 import '../theme/app_colors.dart';
+import '../widgets/share_card.dart';
 
 enum _GamePhase { readyUp, playing }
 
@@ -44,6 +46,11 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
   double _scoreGained = 0;
   bool _showScoreGained = false;
   bool _gameOver = false;
+  int _maxStreak = 0;
+
+  // Personal best
+  int? _bestScore;
+  bool _isNewBest = false;
 
   // Timer
   double _timeLeft = _roundDuration;
@@ -62,6 +69,9 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
       vsync: this,
       duration: const Duration(seconds: 5),
     );
+    PersonalBests.speedRoundScore().then((best) {
+      if (mounted) setState(() => _bestScore = best);
+    });
   }
 
   @override
@@ -97,6 +107,8 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
       _streak = 0;
       _questionsAnswered = 0;
       _gameOver = false;
+      _maxStreak = 0;
+      _isNewBest = false;
     });
     _nextQuestion();
   }
@@ -146,6 +158,40 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
       _gameOver = true;
     });
     _playSound('s35');
+    _recordResult();
+  }
+
+  Future<void> _recordResult() async {
+    final isNewBest = await PersonalBests.recordSpeedRound(
+      score: _score,
+      streak: _maxStreak,
+    );
+    if (!mounted) return;
+    setState(() {
+      _isNewBest = isNewBest;
+      if (isNewBest) _bestScore = _score;
+    });
+  }
+
+  void _shareScore() {
+    showShareCardSheet(
+      context,
+      fileName: 'soundr-speed-round-$_score',
+      shareText: 'I scored $_score in Soundr’s Speed Round ⚡ '
+          'Can you beat it?',
+      card: ShareCard(
+        eyebrow: 'Speed Round',
+        emoji: '⚡',
+        value: '$_score',
+        unit: _score == 1 ? 'point' : 'points',
+        badge: _isNewBest ? '🏆  New personal best' : null,
+        stats: [
+          '$_questionsAnswered correct',
+          if (_maxStreak >= 3) '🔥 $_maxStreak streak',
+        ],
+        tagline: 'Can you beat\nmy score?',
+      ),
+    );
   }
 
   Future<void> _playSound(String id) async {
@@ -172,10 +218,12 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
         _gameOver = true;
       });
       _playSound('s35');
+      _recordResult();
       return;
     }
 
     _streak++;
+    _maxStreak = max(_maxStreak, _streak);
     final multiplier = _streak >= 7 ? 2.0 : _streak >= 3 ? 1.5 : 1.0;
     final gained = (max(1, (_timeLeft / _roundDuration * 10).round()) * multiplier);
 
@@ -251,8 +299,13 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
                   _GameOverOverlay(
                     score: _score,
                     questionsAnswered: _questionsAnswered,
+                    timedOut: _chosen == null,
+                    answerName: _target?.name,
+                    bestScore: _bestScore,
+                    isNewBest: _isNewBest,
                     accent: accent,
                     colors: c,
+                    onShare: _shareScore,
                     onPlayAgain: () => setState(() {
                       _gamePhase = _GamePhase.readyUp;
                     }),
@@ -310,6 +363,25 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
                 fontSize: 13,
               ),
             ),
+            if (_bestScore != null) ...[
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                ),
+                child: Text(
+                  '🏆  Personal best: $_bestScore pts',
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 40),
             SizedBox(
               width: double.infinity,
@@ -508,16 +580,26 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
 class _GameOverOverlay extends StatelessWidget {
   final int score;
   final int questionsAnswered;
+  final bool timedOut;
+  final String? answerName;
+  final int? bestScore;
+  final bool isNewBest;
   final Color accent;
   final AppColors colors;
   final VoidCallback onPlayAgain;
+  final VoidCallback onShare;
 
   const _GameOverOverlay({
     required this.score,
     required this.questionsAnswered,
+    required this.timedOut,
+    required this.answerName,
+    required this.bestScore,
+    required this.isNewBest,
     required this.accent,
     required this.colors,
     required this.onPlayAgain,
+    required this.onShare,
   });
 
   @override
@@ -536,10 +618,10 @@ class _GameOverOverlay extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('⏰', style: TextStyle(fontSize: 48)),
+              Text(timedOut ? '⏰' : '❌', style: const TextStyle(fontSize: 48)),
               const SizedBox(height: 12),
               Text(
-                'Time\'s up!',
+                timedOut ? 'Time\'s up!' : 'Wrong answer!',
                 style: TextStyle(
                   color: colors.textPrimary,
                   fontSize: 24,
@@ -548,7 +630,12 @@ class _GameOverOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'You ran out of time.',
+                answerName == null
+                    ? 'You ran out of time.'
+                    : timedOut
+                        ? 'Out of time — it was “$answerName”.'
+                        : 'It was “$answerName”.',
+                textAlign: TextAlign.center,
                 style: TextStyle(color: colors.textSecondary, fontSize: 14),
               ),
               const SizedBox(height: 24),
@@ -559,7 +646,30 @@ class _GameOverOverlay extends StatelessWidget {
                   _StatChip(label: 'Correct', value: '$questionsAnswered', accent: accent, colors: colors),
                 ],
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 16),
+              if (isNewBest)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.amber.withValues(alpha: 0.5)),
+                  ),
+                  child: Text(
+                    '🏆  New personal best!',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                )
+              else if (bestScore != null)
+                Text(
+                  'Personal best: $bestScore pts',
+                  style: TextStyle(color: colors.textMuted, fontSize: 13),
+                ),
+              const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
@@ -581,6 +691,28 @@ class _GameOverOverlay extends StatelessWidget {
                   ),
                 ),
               ),
+              if (score > 0) ...[
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: onShare,
+                    icon: const Icon(Icons.ios_share_rounded, size: 18),
+                    label: const Text(
+                      'Share score',
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: accent,
+                      side: BorderSide(color: accent.withValues(alpha: 0.5)),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

@@ -5,9 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 
 import '../models/sound_model.dart';
+import '../services/personal_bests.dart';
 import '../theme/app_colors.dart';
+import '../widgets/share_card.dart';
 
 enum _CardState { faceDown, faceUp, matched }
+
+String _formatTime(int s) =>
+    '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
 
 enum _Difficulty { easy, medium, hard }
 
@@ -49,6 +54,11 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
   Timer? _timer;
   bool _won = false;
 
+  // Personal bests per difficulty, and which ones the last win beat.
+  final Map<_Difficulty, ({int? seconds, int? moves})> _bests = {};
+  bool _newBestTime = false;
+  bool _newBestMoves = false;
+
   // Difficulty config: (pairs, columns)
   static const _config = {
     _Difficulty.easy:   (pairs: 4,  columns: 4),
@@ -65,6 +75,54 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
     _loadedSounds = widget.sounds
         .where((s) => widget.preloaded[s.id] != null)
         .toList();
+    _loadBests();
+  }
+
+  Future<void> _loadBests() async {
+    for (final d in _Difficulty.values) {
+      final best = await PersonalBests.pairMatch(d.name);
+      if (!mounted) return;
+      setState(() => _bests[d] = best);
+    }
+  }
+
+  Future<void> _recordWin() async {
+    final difficulty = _difficulty!;
+    final beat = await PersonalBests.recordPairMatch(
+      difficulty: difficulty.name,
+      seconds: _elapsedSeconds,
+      moves: _moves,
+    );
+    final best = await PersonalBests.pairMatch(difficulty.name);
+    if (!mounted) return;
+    setState(() {
+      _newBestTime = beat.time;
+      _newBestMoves = beat.moves;
+      _bests[difficulty] = best;
+    });
+  }
+
+  void _shareResult() {
+    final label = _DifficultyTile._meta[_difficulty!]!.label;
+    final time = _formatTime(_elapsedSeconds);
+    showShareCardSheet(
+      context,
+      fileName: 'soundr-pair-match-${_difficulty!.name}',
+      shareText: 'I matched all $_pairCount pairs on $label in $time 🃏 '
+          'Can you beat my time?',
+      card: ShareCard(
+        eyebrow: 'Pair Match · $label',
+        emoji: '🃏',
+        value: time,
+        unit: 'to match $_pairCount pairs by ear',
+        badge: _newBestTime ? '🏆  New best time' : null,
+        stats: [
+          '$_moves moves',
+          if (_newBestMoves && !_newBestTime) '🏆 Fewest moves yet',
+        ],
+        tagline: 'Can you beat\nmy time?',
+      ),
+    );
   }
 
   @override
@@ -91,6 +149,8 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
     _timerStarted = false;
     _elapsedSeconds = 0;
     _won = false;
+    _newBestTime = false;
+    _newBestMoves = false;
     _timer?.cancel();
   }
 
@@ -144,6 +204,7 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
       if (_matchedPairs == _pairCount) {
         _timer?.cancel();
         _playSoundById('s90');
+        _recordWin();
         Future.delayed(const Duration(milliseconds: 400), () {
           if (mounted) setState(() => _won = true);
         });
@@ -172,9 +233,6 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
     _timer?.cancel();
     setState(() => _difficulty = null);
   }
-
-  String _formatTime(int s) =>
-      '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
@@ -276,9 +334,13 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
                     moves: _moves,
                     elapsedSeconds: _elapsedSeconds,
                     difficulty: _difficulty!,
+                    best: _bests[_difficulty!],
+                    newBestTime: _newBestTime,
+                    newBestMoves: _newBestMoves,
                     accent: accent,
                     colors: c,
                     onPlayAgain: _playAgain,
+                    onShare: _shareResult,
                     onChangeDifficulty: _changeDifficulty,
                   ),
               ],
@@ -324,6 +386,7 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
             const SizedBox(height: 36),
             ..._Difficulty.values.map((d) => _DifficultyTile(
                   difficulty: d,
+                  best: _bests[d],
                   accent: accent,
                   colors: c,
                   onTap: () => _selectDifficulty(d),
@@ -337,12 +400,14 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
 
 class _DifficultyTile extends StatelessWidget {
   final _Difficulty difficulty;
+  final ({int? seconds, int? moves})? best;
   final Color accent;
   final AppColors colors;
   final VoidCallback onTap;
 
   const _DifficultyTile({
     required this.difficulty,
+    required this.best,
     required this.accent,
     required this.colors,
     required this.onTap,
@@ -393,6 +458,28 @@ class _DifficultyTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (best?.seconds != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        '🏆 ${_formatTime(best!.seconds!)}',
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (best!.moves != null)
+                        Text(
+                          '${best!.moves} moves',
+                          style: TextStyle(color: colors.textMuted, fontSize: 11),
+                        ),
+                    ],
+                  ),
+                ),
               Icon(Icons.chevron_right_rounded, color: colors.textMuted, size: 22),
             ],
           ),
@@ -471,23 +558,28 @@ class _WinOverlay extends StatelessWidget {
   final int moves;
   final int elapsedSeconds;
   final _Difficulty difficulty;
+  final ({int? seconds, int? moves})? best;
+  final bool newBestTime;
+  final bool newBestMoves;
   final Color accent;
   final AppColors colors;
   final VoidCallback onPlayAgain;
+  final VoidCallback onShare;
   final VoidCallback onChangeDifficulty;
 
   const _WinOverlay({
     required this.moves,
     required this.elapsedSeconds,
     required this.difficulty,
+    required this.best,
+    required this.newBestTime,
+    required this.newBestMoves,
     required this.accent,
     required this.colors,
     required this.onPlayAgain,
+    required this.onShare,
     required this.onChangeDifficulty,
   });
-
-  String _formatTime(int s) =>
-      '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
@@ -523,6 +615,33 @@ class _WinOverlay extends StatelessWidget {
                   _Stat(label: 'Moves', value: '$moves', accent: accent, colors: colors),
                 ],
               ),
+              const SizedBox(height: 16),
+              if (newBestTime || newBestMoves)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.amber.withValues(alpha: 0.5)),
+                  ),
+                  child: Text(
+                    newBestTime && newBestMoves
+                        ? '🏆  New best time & fewest moves!'
+                        : newBestTime
+                            ? '🏆  New best time!'
+                            : '🏆  Fewest moves yet!',
+                    style: TextStyle(
+                      color: colors.textPrimary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                )
+              else if (best?.seconds != null)
+                Text(
+                  'Best: ${_formatTime(best!.seconds!)} · ${best!.moves} moves',
+                  style: TextStyle(color: colors.textMuted, fontSize: 13),
+                ),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
@@ -540,6 +659,24 @@ class _WinOverlay extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: onShare,
+                  icon: const Icon(Icons.ios_share_rounded, size: 18),
+                  label: const Text(
+                    'Share time',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: accent,
+                    side: BorderSide(color: accent.withValues(alpha: 0.5)),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
               SizedBox(
                 width: double.infinity,
                 child: TextButton(
