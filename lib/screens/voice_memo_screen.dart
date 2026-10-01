@@ -13,8 +13,14 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../services/haptics.dart';
+import '../services/waveforms.dart';
 import '../theme/app_colors.dart';
 import '../widgets/permission_denied_card.dart';
+import '../widgets/voice_memo_peaks.dart';
+import '../widgets/voice_memo_record_panel.dart';
+import '../widgets/voice_memo_tiles.dart';
+import 'clip_editor_screen.dart';
 
 // ── Data model ───────────────────────────────────────────────────────────────
 
@@ -79,6 +85,19 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
   // Memos
   List<_Memo> _memos = [];
 
+  /// The open (expanded) memo, if any. Only it has a player.
+  String? _activeId;
+
+  /// Whether opening [_activeId] should start playback straight away.
+  bool _autoplay = false;
+  final Set<String> _requestedPeaks = {};
+
+  // Search
+  bool _searching = false;
+  String _query = '';
+  final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
+
   // Paths
   late Directory _memosDir;
   late File _indexFile;
@@ -94,6 +113,8 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
     _elapsedTimer?.cancel();
     _streamSub?.cancel();
     _recorder.dispose();
+    _searchFocus.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -304,6 +325,7 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
     });
   }
 
+
   // ── Memo actions ───────────────────────────────────────────────────────────
 
   Future<void> _deleteMemo(_Memo memo) async {
@@ -331,12 +353,14 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
     );
     if (confirmed != true) return;
 
+    // Close its player (if open) before the file goes away.
+    if (_activeId == memo.id && mounted) setState(() => _activeId = null);
     _memos.remove(memo);
     await _saveMemos();
     try {
       await File(memo.path).delete();
     } catch (_) {}
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   Future<void> _renameMemo(_Memo memo) async {
@@ -368,6 +392,68 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
     Share.shareXFiles([XFile(memo.path)], subject: memo.name);
   }
 
+  /// Opens the clip editor on a copy of this memo. The editor saves the clip
+  /// itself (and pops `true`); the soundboard reloads its clips on its side.
+  Future<void> _addToSoundboard(_Memo memo) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => ClipEditorScreen(filePath: memo.path)),
+    );
+    if (saved == true && mounted) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('“${memo.name}” added to your soundboard')),
+      );
+    }
+  }
+
+  void _open(_Memo memo, {required bool play}) {
+    Haptics.light();
+    setState(() {
+      _activeId = memo.id;
+      _autoplay = play;
+    });
+  }
+
+  // ── Search ─────────────────────────────────────────────────────────────────
+
+  void _startSearch() {
+    Haptics.selection();
+    setState(() => _searching = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _searching) _searchFocus.requestFocus();
+    });
+  }
+
+  void _endSearch() {
+    _searchFocus.unfocus();
+    _searchCtrl.clear();
+    setState(() {
+      _searching = false;
+      _query = '';
+    });
+  }
+
+  List<_Memo> get _visibleMemos {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return _memos;
+    return _memos.where((m) => m.name.toLowerCase().contains(q)).toList();
+  }
+
+  // ── Waveforms ──────────────────────────────────────────────────────────────
+
+  static const _rowBars = 10;
+
+  List<double> _rowLevels(_Memo memo) {
+    final cached = VoiceMemoPeaks.peek(memo.path, _rowBars);
+    if (cached != null) return cached;
+    if (_requestedPeaks.add(memo.path)) {
+      VoiceMemoPeaks.of(memo.path, bars: _rowBars).then((_) {
+        if (mounted) setState(() {});
+      });
+    }
+    return Waveforms.placeholder(memo.path, _rowBars);
+  }
+
   // ── Format helpers ─────────────────────────────────────────────────────────
 
   static String _formatDate(DateTime d) {
@@ -375,10 +461,29 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
+    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     final hour = d.hour % 12 == 0 ? 12 : d.hour % 12;
     final minute = d.minute.toString().padLeft(2, '0');
     final ampm = d.hour < 12 ? 'AM' : 'PM';
-    return '${months[d.month - 1]} ${d.day} · $hour:$minute $ampm';
+    final time = '$hour:$minute $ampm';
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(d.year, d.month, d.day);
+    final daysAgo = today.difference(day).inDays;
+    final String date;
+    if (daysAgo == 0) {
+      date = 'Today';
+    } else if (daysAgo == 1) {
+      date = 'Yesterday';
+    } else if (daysAgo > 1 && daysAgo < 7) {
+      date = weekdays[d.weekday - 1];
+    } else if (d.year == now.year) {
+      date = '${months[d.month - 1]} ${d.day}';
+    } else {
+      date = '${months[d.month - 1]} ${d.day}, ${d.year}';
+    }
+    return '$date · $time';
   }
 
   static String _formatDuration(int sec) {
@@ -387,289 +492,298 @@ class _VoiceMemoScreenState extends State<VoiceMemoScreen> {
     return '$m:$s';
   }
 
+  /// "4 memos · 6 min · stored only on this phone"
+  String _summary() {
+    final n = _memos.length;
+    final total = _memos.fold<int>(0, (a, m) => a + m.durationSec);
+    final String length;
+    if (total < 60) {
+      length = '$total sec';
+    } else if (total < 3600) {
+      length = '${(total / 60).round()} min';
+    } else {
+      final h = total ~/ 3600;
+      final m = ((total % 3600) / 60).round();
+      length = m == 0 ? '$h h' : '$h h $m min';
+    }
+    final count = n == 1 ? '1 memo' : '$n memos';
+    return n == 0
+        ? 'Stored only on this phone'
+        : '$count · $length · stored only on this phone';
+  }
+
   // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
-    final accent = Theme.of(context).colorScheme.primary;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final visible = _visibleMemos;
 
     return Scaffold(
       backgroundColor: c.scaffoldBg,
       appBar: AppBar(
         backgroundColor: c.scaffoldBg,
         surfaceTintColor: Colors.transparent,
-        title: Text('Voice Memos', style: TextStyle(color: c.textPrimary)),
+        title: _searching
+            ? Container(
+                height: 44,
+                decoration: BoxDecoration(
+                  color: c.surfaceCard,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: c.border),
+                ),
+                alignment: Alignment.center,
+                child: TextField(
+                  controller: _searchCtrl,
+                  focusNode: _searchFocus,
+                  textInputAction: TextInputAction.search,
+                  onChanged: (v) => setState(() => _query = v),
+                  style: TextStyle(color: c.textPrimary, fontSize: 16),
+                  cursorColor: Theme.of(context).colorScheme.primary,
+                  decoration: InputDecoration(
+                    hintText: 'Search memos',
+                    hintStyle: TextStyle(color: c.textSecondary, fontSize: 16),
+                    prefixIcon:
+                        Icon(Icons.search_rounded, size: 20, color: c.textSecondary),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    filled: false,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              )
+            : Text(
+                'Voice memos',
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
         iconTheme: IconThemeData(color: c.textPrimary),
-        systemOverlayStyle: SystemUiOverlayStyle.light,
+        systemOverlayStyle:
+            dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: IconButton(
+              onPressed: _searching ? _endSearch : _startSearch,
+              tooltip: _searching ? 'Close search' : 'Search memos',
+              icon: Icon(
+                _searching ? Icons.close_rounded : Icons.search_rounded,
+                size: 20,
+              ),
+              style: IconButton.styleFrom(
+                foregroundColor: c.textPrimary,
+                backgroundColor: c.surfaceCard,
+                fixedSize: const Size(44, 44),
+                minimumSize: const Size(44, 44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: BorderSide(color: c.border),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       body: SafeArea(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Recording card — replaced by permission denial UI when needed.
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: _micDenied != null
-                  ? PermissionDeniedCard(
-                      permission: Permission.microphone,
-                      icon: Icons.mic_rounded,
-                      permissionLabel: 'Microphone',
-                      purpose:
-                          'Voice memos are recorded using your microphone and saved on this device only. '
-                          'Nothing is uploaded or shared automatically.',
-                      onGranted: () {
-                        if (mounted) setState(() => _micDenied = null);
-                      },
-                    )
-                  : _buildRecordingCard(c, accent),
+              padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+              child: Text(
+                _summary(),
+                style: TextStyle(color: c.textSecondary, fontSize: 13),
+              ),
             ),
-            // Memo list
             Expanded(
               child: _memos.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No recordings yet.\nTap the mic to start.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: c.textMuted, height: 1.6),
-                      ),
+                  ? _EmptyState(
+                      icon: Icons.mic_none_rounded,
+                      title: 'No memos yet',
+                      message:
+                          'Tap the record button below to start.',
                     )
-                  : ListView.separated(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                      itemCount: _memos.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemBuilder: (context, i) {
-                        final memo = _memos[i];
-                        return _MemoRow(
-                          key: ValueKey(memo.id),
-                          memo: memo,
-                          colors: c,
-                          accent: accent,
-                          formatDate: _formatDate,
-                          formatDuration: _formatDuration,
-                          onDelete: () => _deleteMemo(memo),
-                          onRename: () => _renameMemo(memo),
-                          onShare: () => _shareMemo(memo),
-                        );
-                      },
-                    ),
+                  : visible.isEmpty
+                      ? _EmptyState(
+                          icon: Icons.search_off_rounded,
+                          title: 'No matches',
+                          message: 'No memo names contain “${_query.trim()}”.',
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                          itemCount: visible.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (context, i) {
+                            final memo = visible[i];
+                            if (memo.id == _activeId) {
+                              return _MemoPlayer(
+                                key: ValueKey('player-${memo.id}'),
+                                memo: memo,
+                                subtitle: _formatDate(memo.createdAt),
+                                autoplay: _autoplay,
+                                onCollapse: () =>
+                                    setState(() => _activeId = null),
+                                onRename: () => _renameMemo(memo),
+                                onShare: () => _shareMemo(memo),
+                                onDelete: () => _deleteMemo(memo),
+                                onAddToSoundboard: () => _addToSoundboard(memo),
+                              );
+                            }
+                            return VoiceMemoRow(
+                              key: ValueKey('row-${memo.id}'),
+                              title: memo.name,
+                              subtitle: _formatDate(memo.createdAt),
+                              duration: _formatDuration(memo.durationSec),
+                              levels: _rowLevels(memo),
+                              onPlay: () => _open(memo, play: true),
+                              onOpen: () => _open(memo, play: false),
+                            );
+                          },
+                        ),
+            ),
+            // Record button — replaced by the permission card when denied.
+            if (_micDenied != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: PermissionDeniedCard(
+                  permission: Permission.microphone,
+                  icon: Icons.mic_rounded,
+                  permissionLabel: 'Microphone',
+                  purpose:
+                      'Voice memos are recorded using your microphone and saved on this device only. '
+                      'Nothing is uploaded or shared automatically.',
+                  onGranted: () {
+                    if (mounted) setState(() => _micDenied = null);
+                  },
+                ),
+              )
+            else
+              VoiceMemoRecordPanel(
+                state: _processing
+                    ? VoiceMemoRecordState.saving
+                    : _recording
+                        ? VoiceMemoRecordState.recording
+                        : VoiceMemoRecordState.idle,
+                elapsed: _elapsed,
+                levels: _ampHistory,
+                onTap: () {
+                  Haptics.medium();
+                  _recording ? _stopRecording() : _startRecording();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Empty state ──────────────────────────────────────────────────────────────
+
+class _EmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: kVoiceMemoTint.withValues(alpha: 0.14),
+                border: Border.all(color: kVoiceMemoTint.withValues(alpha: 0.35)),
+              ),
+              child: Icon(icon, color: voiceMemoTintText(context), size: 28),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: c.textSecondary, fontSize: 14, height: 1.4),
             ),
           ],
         ),
       ),
     );
   }
-
-  Widget _buildRecordingCard(AppColors c, Color accent) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-      decoration: BoxDecoration(
-        color: c.surfaceCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: c.border),
-      ),
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
-      child: _processing
-          ? _buildProcessingState(c)
-          : _recording
-              ? _buildRecordingState(c, accent)
-              : _buildIdleState(c, accent),
-    );
-  }
-
-  Widget _buildIdleState(AppColors c, Color accent) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GestureDetector(
-          onTap: _startRecording,
-          child: Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: accent.withValues(alpha: 0.12),
-              border: Border.all(color: accent.withValues(alpha: 0.4), width: 2),
-            ),
-            child: Icon(Icons.mic_rounded, color: accent, size: 36),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Text(
-          'Tap to record',
-          style: TextStyle(color: c.textSecondary, fontSize: 14),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRecordingState(AppColors c, Color accent) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Amplitude bars
-        SizedBox(
-          height: 48,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: List.generate(_ampHistory.length, (i) {
-              final amp = _ampHistory[i];
-              final height = 6.0 + amp * 42.0;
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 1.5),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 80),
-                  width: 4,
-                  height: height,
-                  decoration: BoxDecoration(
-                    color: Color.lerp(
-                      accent.withValues(alpha: 0.35),
-                      accent,
-                      amp,
-                    ),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              );
-            }),
-          ),
-        ),
-        const SizedBox(height: 14),
-        // Elapsed time
-        Text(
-          _formatDuration(_elapsed.inSeconds),
-          style: TextStyle(
-            color: c.textPrimary,
-            fontSize: 22,
-            fontWeight: FontWeight.w600,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-        const SizedBox(height: 16),
-        // Stop button
-        _PulsingButton(
-          onTap: _stopRecording,
-          child: Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: Colors.red,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.red.withValues(alpha: 0.4),
-                  blurRadius: 12,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-            child: const Icon(Icons.stop_rounded, color: Colors.white, size: 32),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildProcessingState(AppColors c) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation(
-              Theme.of(context).colorScheme.primary),
-          strokeWidth: 2.5,
-        ),
-        const SizedBox(height: 14),
-        Text('Saving…', style: TextStyle(color: c.textSecondary, fontSize: 14)),
-      ],
-    );
-  }
 }
 
-// ── Pulsing stop button ───────────────────────────────────────────────────────
+// ── Open memo (player) ───────────────────────────────────────────────────────
 
-class _PulsingButton extends StatefulWidget {
-  final Widget child;
-  final VoidCallback onTap;
-
-  const _PulsingButton({required this.child, required this.onTap});
-
-  @override
-  State<_PulsingButton> createState() => _PulsingButtonState();
-}
-
-class _PulsingButtonState extends State<_PulsingButton>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat(reverse: true);
-    _scale = Tween<double>(begin: 1.0, end: 1.08).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: _scale,
-      child: GestureDetector(onTap: widget.onTap, child: widget.child),
-    );
-  }
-}
-
-// ── Memo row ─────────────────────────────────────────────────────────────────
-
-class _MemoRow extends StatefulWidget {
+/// The expanded, current memo. Owns its [PlayerController]; only one exists at
+/// a time, so opening another memo releases this one's player.
+class _MemoPlayer extends StatefulWidget {
   final _Memo memo;
-  final AppColors colors;
-  final Color accent;
-  final String Function(DateTime) formatDate;
-  final String Function(int) formatDuration;
-  final VoidCallback onDelete;
+  final String subtitle;
+  final bool autoplay;
+  final VoidCallback onCollapse;
   final VoidCallback onRename;
   final VoidCallback onShare;
+  final VoidCallback onDelete;
+  final VoidCallback onAddToSoundboard;
 
-  const _MemoRow({
+  const _MemoPlayer({
     super.key,
     required this.memo,
-    required this.colors,
-    required this.accent,
-    required this.formatDate,
-    required this.formatDuration,
-    required this.onDelete,
+    required this.subtitle,
+    required this.autoplay,
+    required this.onCollapse,
     required this.onRename,
     required this.onShare,
+    required this.onDelete,
+    required this.onAddToSoundboard,
   });
 
   @override
-  State<_MemoRow> createState() => _MemoRowState();
+  State<_MemoPlayer> createState() => _MemoPlayerState();
 }
 
-class _MemoRowState extends State<_MemoRow> {
-  PlayerController? _playerCtrl;
+class _MemoPlayerState extends State<_MemoPlayer> {
+  static const _bars = 48;
+  static const _speeds = [1.0, 1.5, 2.0];
+
+  final PlayerController _playerCtrl = PlayerController();
   StreamSubscription<PlayerState>? _stateSub;
   StreamSubscription<int>? _positionSub;
-  bool _expanded = false;
   bool _prepared = false;
-  bool _preparing = false;
   PlayerState _playerState = PlayerState.stopped;
 
   int _positionMs = 0;
   int _durationMs = 0;
+  double _speed = 1.0;
+  // Hidden if the platform player refuses a rate change.
+  bool _speedSupported = true;
+  late List<double> _levels;
 
   // True once playback has reached the end (paused at EOF via FinishMode.pause).
   // Next play/pause press will rewind to 0 first.
@@ -678,80 +792,90 @@ class _MemoRowState extends State<_MemoRow> {
   // distinguish manual pauses from natural EOF transitions.
   bool _manualPause = false;
 
+  int get _totalMs =>
+      _durationMs > 0 ? _durationMs : widget.memo.durationSec * 1000;
+
+  @override
+  void initState() {
+    super.initState();
+    final path = widget.memo.path;
+    _levels = VoiceMemoPeaks.peek(path, _bars) ??
+        Waveforms.placeholder(path, _bars);
+    VoiceMemoPeaks.of(path, bars: _bars).then((levels) {
+      if (mounted) setState(() => _levels = levels);
+    });
+    _prepare();
+  }
+
   @override
   void dispose() {
     _stateSub?.cancel();
     _positionSub?.cancel();
-    _playerCtrl?.dispose();
+    _playerCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _toggleExpand() async {
-    if (_expanded) {
-      await _playerCtrl?.pausePlayer();
-      setState(() => _expanded = false);
-      return;
-    }
-
-    setState(() => _expanded = true);
-
-    if (!_prepared && !_preparing) {
-      _preparing = true;
-      _playerCtrl ??= PlayerController();
-
-      _stateSub = _playerCtrl!.onPlayerStateChanged.listen((state) {
-        if (!mounted) return;
-        final prev = _playerState;
-        setState(() => _playerState = state);
-        // playing → (paused | stopped) is either a manual pause (resume from
-        // current position) or natural EOF (rewind on next play). The
-        // _manualPause flag, set right before pausePlayer(), tells them apart.
-        if (prev == PlayerState.playing &&
-            (state == PlayerState.paused || state == PlayerState.stopped)) {
-          if (_manualPause) {
-            _manualPause = false;
-            _atEnd = false;
-          } else {
-            _atEnd = true;
-          }
-        }
-        if (state == PlayerState.playing) _atEnd = false;
-      });
-
-      _positionSub = _playerCtrl!.onCurrentDurationChanged.listen((pos) {
-        if (mounted) setState(() => _positionMs = pos);
-      });
-
-      try {
-        await _playerCtrl!.preparePlayer(
-          path: widget.memo.path,
-          shouldExtractWaveform: true,
-          noOfSamples: 60,
-        );
-        // Mark prepared as soon as prepare succeeds — the waveform should render
-        // regardless of whether the optional calls below succeed.
-        if (mounted) setState(() => _prepared = true);
-
-        // Best-effort: tell the player to pause at EOF instead of stopping.
-        // If this fails we fall back to the re-prepare path in _togglePlayPause.
-        try {
-          await _playerCtrl!.setFinishMode(finishMode: FinishMode.pause);
-        } catch (_) {}
-
-        // Best-effort: pull total duration for the time display.
-        try {
-          final dur = await _playerCtrl!.getDuration(DurationType.max);
-          if (mounted) setState(() => _durationMs = dur);
-        } catch (_) {}
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not load audio: $e')),
-          );
+  Future<void> _prepare() async {
+    _stateSub = _playerCtrl.onPlayerStateChanged.listen((state) {
+      if (!mounted) return;
+      final prev = _playerState;
+      setState(() => _playerState = state);
+      // playing → (paused | stopped) is either a manual pause (resume from
+      // current position) or natural EOF (rewind on next play). The
+      // _manualPause flag, set right before pausePlayer(), tells them apart.
+      if (prev == PlayerState.playing &&
+          (state == PlayerState.paused || state == PlayerState.stopped)) {
+        if (_manualPause) {
+          _manualPause = false;
+          _atEnd = false;
+        } else {
+          _atEnd = true;
         }
       }
-      _preparing = false;
+      if (state == PlayerState.playing) _atEnd = false;
+    });
+
+    _positionSub = _playerCtrl.onCurrentDurationChanged.listen((pos) {
+      if (mounted) setState(() => _positionMs = pos);
+    });
+
+    try {
+      // The waveform is drawn from VoiceMemoPeaks, so skip the package's
+      // (whole-file) extraction.
+      await _playerCtrl.preparePlayer(
+        path: widget.memo.path,
+        shouldExtractWaveform: false,
+      );
+      if (!mounted) return;
+      setState(() => _prepared = true);
+
+      // Best-effort: tell the player to pause at EOF instead of stopping.
+      // If this fails we fall back to the re-prepare path in _togglePlayPause.
+      try {
+        await _playerCtrl.setFinishMode(finishMode: FinishMode.pause);
+      } catch (_) {}
+
+      // Best-effort: pull total duration for the time display.
+      try {
+        final dur = await _playerCtrl.getDuration(DurationType.max);
+        if (mounted && dur > 0) setState(() => _durationMs = dur);
+      } catch (_) {}
+
+      if (widget.autoplay && mounted) await _togglePlayPause();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not load audio: $e')),
+        );
+      }
     }
+  }
+
+  Future<void> _applySpeed() async {
+    if (_speed == 1.0) return;
+    try {
+      await _playerCtrl.setRate(_speed);
+    } catch (_) {}
   }
 
   /// Returns the player to a "ready to play from 0" state.
@@ -759,23 +883,22 @@ class _MemoRowState extends State<_MemoRow> {
   /// - If state is `stopped` (FinishMode.stop fallback): native resources are
   ///   freed at EOF, so we re-prepare without re-extracting the waveform.
   Future<bool> _rewindForReplay() async {
-    if (_playerCtrl == null) return false;
     if (_playerState == PlayerState.stopped) {
       try {
-        await _playerCtrl!.preparePlayer(
+        await _playerCtrl.preparePlayer(
           path: widget.memo.path,
           shouldExtractWaveform: false,
-          noOfSamples: 60,
         );
         try {
-          await _playerCtrl!.setFinishMode(finishMode: FinishMode.pause);
+          await _playerCtrl.setFinishMode(finishMode: FinishMode.pause);
         } catch (_) {}
+        await _applySpeed();
       } catch (_) {
         return false;
       }
     } else {
       try {
-        await _playerCtrl!.seekTo(0);
+        await _playerCtrl.seekTo(0);
       } catch (_) {}
     }
     _atEnd = false;
@@ -784,359 +907,114 @@ class _MemoRowState extends State<_MemoRow> {
   }
 
   Future<void> _togglePlayPause() async {
-    if (_playerCtrl == null || !_prepared) return;
-    if (_playerState == PlayerState.playing) {
-      _manualPause = true;
-      await _playerCtrl!.pausePlayer();
-      return;
-    }
-    if (_atEnd) {
-      final ok = await _rewindForReplay();
-      if (!ok) return;
-    }
-    // Otherwise startPlayer() resumes from the current position.
-    await _playerCtrl!.startPlayer();
+    if (!_prepared) return;
+    Haptics.light();
+    try {
+      if (_playerState == PlayerState.playing) {
+        _manualPause = true;
+        await _playerCtrl.pausePlayer();
+        return;
+      }
+      if (_atEnd) {
+        final ok = await _rewindForReplay();
+        if (!ok) return;
+      }
+      // Otherwise startPlayer() resumes from the current position.
+      await _playerCtrl.startPlayer();
+      await _applySpeed();
+    } catch (_) {}
   }
 
-  /// Seek the player based on a tap/drag x-coordinate over the waveform.
-  /// Uses _durationMs (or recorded duration as fallback) — sidesteps the
-  /// audio_waveforms package's broken internal maxDuration calculation.
-  void _seekFromGesture(double dx, double width) {
-    if (_playerCtrl == null || !_prepared || width <= 0) return;
-    final totalMs = _durationMs > 0 ? _durationMs : widget.memo.durationSec * 1000;
+  /// Seek to [fraction] (0..1) of the memo. Uses _durationMs (or the recorded
+  /// duration as fallback) — sidesteps the audio_waveforms package's broken
+  /// internal maxDuration calculation.
+  void _seek(double fraction) {
+    if (!_prepared) return;
+    final totalMs = _totalMs;
     if (totalMs <= 0) return;
-    final proportion = (dx / width).clamp(0.0, 1.0);
-    final targetMs = (proportion * totalMs).toInt();
-    try {
-      _playerCtrl!.seekTo(targetMs);
-    } catch (_) {
-      return;
-    }
+    final targetMs = (fraction.clamp(0.0, 1.0) * totalMs).toInt();
+    _playerCtrl.seekTo(targetMs).catchError((_) {});
     _atEnd = false;
-    if (mounted) setState(() => _positionMs = targetMs);
+    setState(() => _positionMs = targetMs);
   }
 
   /// Always seeks to 0; restarts playback if currently playing,
   /// otherwise plays from the start.
   Future<void> _restart() async {
-    if (_playerCtrl == null || !_prepared) return;
-    final wasPlaying = _playerState == PlayerState.playing;
-    if (wasPlaying) {
-      _manualPause = true;
-      try { await _playerCtrl!.pausePlayer(); } catch (_) {}
+    if (!_prepared) return;
+    try {
+      if (_playerState == PlayerState.playing) {
+        _manualPause = true;
+        await _playerCtrl.pausePlayer();
+      }
+      final ok = await _rewindForReplay();
+      if (!ok) return;
+      await _playerCtrl.startPlayer();
+      await _applySpeed();
+    } catch (_) {}
+  }
+
+  Future<void> _cycleSpeed() async {
+    Haptics.selection();
+    final prev = _speed;
+    final next = _speeds[(_speeds.indexOf(prev) + 1) % _speeds.length];
+    setState(() => _speed = next);
+    var ok = true;
+    try {
+      ok = await _playerCtrl.setRate(next);
+    } catch (_) {
+      ok = false;
     }
-    final ok = await _rewindForReplay();
-    if (!ok) return;
-    await _playerCtrl!.startPlayer();
+    if (!ok && mounted) {
+      setState(() {
+        _speed = 1.0;
+        _speedSupported = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Playback speed isn’t available on this phone')),
+      );
+    }
   }
 
-  String _formatMs(int ms) {
-    final totalSec = ms ~/ 1000;
-    final m = totalSec ~/ 60;
-    final s = totalSec % 60;
-    return '$m:${s.toString().padLeft(2, '0')}';
+  Future<void> _pauseIfPlaying() async {
+    if (_playerState != PlayerState.playing) return;
+    _manualPause = true;
+    try {
+      await _playerCtrl.pausePlayer();
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
-    final c = widget.colors;
-    final accent = widget.accent;
-    final memo = widget.memo;
-
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      decoration: BoxDecoration(
-        color: c.surfaceCard,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: _expanded ? accent.withValues(alpha: 0.4) : c.border,
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Collapsed header
-          InkWell(
-            onTap: _toggleExpand,
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              child: Row(
-                children: [
-                  Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: accent.withValues(alpha: 0.12),
-                    ),
-                    child: Icon(Icons.mic_rounded, color: accent, size: 20),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          memo.name,
-                          style: TextStyle(
-                            color: c.textPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          widget.formatDate(memo.createdAt),
-                          style: TextStyle(color: c.textMuted, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(
-                    _expanded
-                        ? Icons.keyboard_arrow_up_rounded
-                        : Icons.keyboard_arrow_down_rounded,
-                    color: c.textMuted,
-                    size: 20,
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Expanded section
-          if (_expanded) ...[
-            Divider(height: 1, color: c.border),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Waveform — tap/drag to seek.
-                  // audio_waveforms 1.3.0's built-in seek is broken: it uses
-                  // playerController.maxDuration which is computed via
-                  // getDuration() (defaulting to DurationType.current = 0),
-                  // so every tap seeks to 0. We disable enableSeekGesture and
-                  // wrap with our own GestureDetector that uses _durationMs.
-                  if (_prepared && _playerCtrl != null)
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        return GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTapUp: (details) => _seekFromGesture(
-                            details.localPosition.dx,
-                            constraints.maxWidth,
-                          ),
-                          onHorizontalDragUpdate: (details) => _seekFromGesture(
-                            details.localPosition.dx,
-                            constraints.maxWidth,
-                          ),
-                          child: AudioFileWaveforms(
-                            playerController: _playerCtrl!,
-                            size: Size(constraints.maxWidth, 56),
-                            waveformType: WaveformType.fitWidth,
-                            enableSeekGesture: false,
-                            playerWaveStyle: PlayerWaveStyle(
-                              fixedWaveColor: accent.withValues(alpha: 0.28),
-                              liveWaveColor: accent,
-                              waveCap: StrokeCap.round,
-                              waveThickness: 2.5,
-                              spacing: 5,
-                            ),
-                          ),
-                        );
-                      },
-                    )
-                  else
-                    Container(
-                      height: 56,
-                      alignment: Alignment.center,
-                      child: _preparing
-                          ? SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor:
-                                    AlwaysStoppedAnimation(accent),
-                              ),
-                            )
-                          : Row(
-                              children: List.generate(
-                                40,
-                                (i) => Expanded(
-                                  child: Container(
-                                    margin: const EdgeInsets.symmetric(
-                                        horizontal: 1),
-                                    height: 4 +
-                                        (sin(i * 0.5).abs() * 32).toDouble(),
-                                    decoration: BoxDecoration(
-                                      color: c.border,
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                    ),
-                  const SizedBox(height: 12),
-
-                  // Transport row: Restart + Play/Pause + Time
-                  Row(
-                    children: [
-                      // Restart — always seeks to 0
-                      _RestartButton(
-                        enabled: _prepared,
-                        accent: accent,
-                        muted: c.textMuted,
-                        border: c.border,
-                        onTap: _restart,
-                      ),
-                      const SizedBox(width: 10),
-
-                      // Play / Pause — large primary action
-                      GestureDetector(
-                        onTap: _prepared ? _togglePlayPause : null,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          width: 52,
-                          height: 52,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _prepared
-                                ? accent
-                                : accent.withValues(alpha: 0.4),
-                            boxShadow: [
-                              BoxShadow(
-                                color: accent.withValues(alpha: 0.25),
-                                blurRadius: 12,
-                                spreadRadius: 1,
-                              ),
-                            ],
-                          ),
-                          child: Icon(
-                            _playerState == PlayerState.playing
-                                ? Icons.pause_rounded
-                                : (_atEnd
-                                    ? Icons.replay_rounded
-                                    : Icons.play_arrow_rounded),
-                            color: Colors.white,
-                            size: 30,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-
-                      // Live time display
-                      Expanded(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.start,
-                          children: [
-                            Text(
-                              _formatMs(_positionMs),
-                              style: TextStyle(
-                                color: c.textPrimary,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                                fontFeatures: const [
-                                  FontFeature.tabularFigures()
-                                ],
-                              ),
-                            ),
-                            Text(
-                              ' / ',
-                              style: TextStyle(
-                                color: c.textMuted,
-                                fontSize: 14,
-                              ),
-                            ),
-                            Text(
-                              _durationMs > 0
-                                  ? _formatMs(_durationMs)
-                                  : widget.formatDuration(memo.durationSec),
-                              style: TextStyle(
-                                color: c.textMuted,
-                                fontSize: 14,
-                                fontFeatures: const [
-                                  FontFeature.tabularFigures()
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-
-                  // Separator
-                  Divider(height: 1, color: c.border),
-                  const SizedBox(height: 6),
-
-                  // Action row
-                  Row(
-                    children: [
-                      _IconBtn(
-                        icon: Icons.edit_outlined,
-                        color: c.textMuted,
-                        onTap: widget.onRename,
-                        tooltip: 'Rename',
-                      ),
-                      _IconBtn(
-                        icon: Icons.ios_share_rounded,
-                        color: c.textMuted,
-                        onTap: widget.onShare,
-                        tooltip: 'Share',
-                      ),
-                      const Spacer(),
-                      _IconBtn(
-                        icon: Icons.delete_outline_rounded,
-                        color: Colors.red.withValues(alpha: 0.7),
-                        onTap: widget.onDelete,
-                        tooltip: 'Delete',
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-// ── Small icon button ─────────────────────────────────────────────────────────
-
-class _IconBtn extends StatelessWidget {
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  final String tooltip;
-
-  const _IconBtn({
-    required this.icon,
-    required this.color,
-    required this.onTap,
-    required this.tooltip,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: IconButton(
-        icon: Icon(icon, color: color, size: 20),
-        onPressed: onTap,
-        splashRadius: 20,
-        padding: const EdgeInsets.all(6),
-        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-      ),
+    final playing = _playerState == PlayerState.playing;
+    return VoiceMemoPlayerCard(
+      title: widget.memo.name,
+      subtitle: widget.subtitle,
+      ready: _prepared,
+      playing: playing,
+      atEnd: _atEnd,
+      positionMs: _atEnd && !playing ? _totalMs : _positionMs,
+      totalMs: _totalMs,
+      levels: _levels,
+      speed: _speedSupported ? _speed : null,
+      onCycleSpeed: _prepared ? _cycleSpeed : null,
+      onPlayPause: _togglePlayPause,
+      onSeek: _seek,
+      onRestart: _restart,
+      onCollapse: () async {
+        await _pauseIfPlaying();
+        widget.onCollapse();
+      },
+      onAddToSoundboard: () async {
+        await _pauseIfPlaying();
+        widget.onAddToSoundboard();
+      },
+      onShare: widget.onShare,
+      onRename: widget.onRename,
+      onDelete: () async {
+        await _pauseIfPlaying();
+        widget.onDelete();
+      },
     );
   }
 }
@@ -1227,51 +1105,6 @@ class _MemoRenameDialogState extends State<_MemoRenameDialog> {
           ),
         ),
       ],
-    );
-  }
-}
-
-// ── Restart button ────────────────────────────────────────────────────────────
-
-class _RestartButton extends StatelessWidget {
-  final bool enabled;
-  final Color accent;
-  final Color muted;
-  final Color border;
-  final VoidCallback onTap;
-
-  const _RestartButton({
-    required this.enabled,
-    required this.accent,
-    required this.muted,
-    required this.border,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Restart',
-      child: GestureDetector(
-        onTap: enabled ? onTap : null,
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.transparent,
-            border: Border.all(
-              color: enabled ? accent.withValues(alpha: 0.4) : border,
-              width: 1.5,
-            ),
-          ),
-          child: Icon(
-            Icons.skip_previous_rounded,
-            color: enabled ? accent : muted,
-            size: 22,
-          ),
-        ),
-      ),
     );
   }
 }

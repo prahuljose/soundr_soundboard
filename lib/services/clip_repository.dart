@@ -132,6 +132,25 @@ class ClipRepository {
     );
   }
 
+  /// Every setting whose key starts with [prefix], keyed by the rest of the key.
+  static Future<Map<String, String>> getStringsWithPrefix(String prefix) async {
+    final db = await _database;
+    final rows = await db.query(
+      'settings',
+      where: 'substr(key, 1, ?) = ?',
+      whereArgs: [prefix.length, prefix],
+    );
+    return {
+      for (final r in rows)
+        (r['key'] as String).substring(prefix.length): r['value'] as String,
+    };
+  }
+
+  static Future<void> deleteSetting(String key) async {
+    final db = await _database;
+    await db.delete('settings', where: 'key = ?', whereArgs: [key]);
+  }
+
   static Future<int?> getInt(String key) async =>
       int.tryParse(await getString(key) ?? '');
 

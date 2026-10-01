@@ -19,10 +19,12 @@ import '../services/clip_repository.dart';
 import '../services/haptics.dart';
 import '../services/notification_service.dart';
 import '../services/quick_sounds.dart';
+import '../services/sound_prefs.dart';
 import '../theme/app_colors.dart';
 import '../widgets/first_run_tour.dart';
 import '../widgets/share_card.dart' show soundrPlayStoreUrl;
 import '../widgets/sound_button.dart';
+import '../widgets/sound_sheet.dart';
 import 'clip_editor_screen.dart';
 import 'decibel_screen.dart';
 import 'metronome_screen.dart';
@@ -36,6 +38,7 @@ import 'morse_tapper_quiz_screen.dart';
 import 'morse_soundr_quiz_screen.dart';
 import 'record_screen.dart';
 import 'settings_screen.dart';
+import 'widget_sounds_screen.dart';
 import 'speed_round_screen.dart';
 import 'pair_match_screen.dart';
 import 'zen_screen.dart';
@@ -54,6 +57,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   final Map<String, AudioSource> _preloaded = {};
   final Map<String, double> _durations = {};
   final List<SoundHandle> _activeHandles = [];
+  // Sounds currently looping (Loop is on in their sheet) → their voice.
+  final Map<String, SoundHandle> _loopHandles = {};
 
   List<SoundModel> _userClips = [];
   String _selectedCategory = 'All';
@@ -241,6 +246,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
       _playCounts = await ClipRepository.getPlayCounts();
       await _loadScenes();
       await Haptics.init();
+      await SoundPrefs.load();
     } catch (_) {/* non-fatal */}
 
     if (mounted) setState(() => _ready = true);
@@ -367,11 +373,24 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     final source = _preloaded[sound.id];
     if (source == null) return;
 
+    // A looping sound toggles: tapping it again stops it.
+    final looping = _loopHandles.remove(sound.id);
+    if (looping != null) {
+      if (SoLoud.instance.getIsValidVoiceHandle(looping)) {
+        SoLoud.instance.stop(looping);
+      }
+      _activeHandles.remove(looping);
+      if (_activeHandles.isEmpty) NotificationService.hideNotification();
+      setState(() {});
+      return;
+    }
+
     if (_stopOnTap) {
       for (final h in _activeHandles.toList()) {
         if (SoLoud.instance.getIsValidVoiceHandle(h)) SoLoud.instance.stop(h);
       }
       _activeHandles.clear();
+      _loopHandles.clear();
       // Signal all OTHER buttons to reset their play animation. The button
       // that triggered this play is excluded so its animation starts fresh.
       setState(() {
@@ -409,20 +428,48 @@ class _SoundboardScreenState extends State<SoundboardScreen>
       _showNotificationHint();
     }
 
-    final handle = await SoLoud.instance.play(source);
+    final trimmed = sound.isUserClip && sound.trimEnd > sound.trimStart;
+    final start = Duration(milliseconds: (sound.trimStart * 1000).round());
+    final loop = SoundPrefs.loops(sound.id);
+    final speed = SoundPrefs.speedOf(sound.id);
+
+    // Start paused so speed and the trim seek apply before the first sample.
+    final handle = await SoLoud.instance.play(
+      source,
+      paused: true,
+      looping: loop,
+      loopingStartAt: trimmed ? start : Duration.zero,
+    );
+    if (trimmed) SoLoud.instance.seek(handle, start);
+    if (speed != 1.0) SoLoud.instance.setRelativePlaySpeed(handle, speed);
+    SoLoud.instance.setPause(handle, false);
     _activeHandles.add(handle);
 
-    final durationMs = sound.isUserClip && sound.trimEnd > sound.trimStart
+    final durationMs = trimmed
         ? ((sound.trimEnd - sound.trimStart) * 1000).round()
         : null;
+    final playDuration = ((durationMs ??
+                SoLoud.instance.getLength(source).inMilliseconds) /
+            speed)
+        .round();
 
-    if (sound.isUserClip && sound.trimEnd > sound.trimStart) {
-      SoLoud.instance.seek(
-          handle, Duration(milliseconds: (sound.trimStart * 1000).round()));
+    if (loop) {
+      if (!mounted) return;
+      setState(() => _loopHandles[sound.id] = handle);
+      // Native looping restarts at the file's end; a trimmed clip has to be
+      // brought back to its trim start at its trim end instead.
+      if (trimmed && playDuration > 0) {
+        Timer.periodic(Duration(milliseconds: playDuration), (t) {
+          if (_loopHandles[sound.id] != handle ||
+              !SoLoud.instance.getIsValidVoiceHandle(handle)) {
+            t.cancel();
+            return;
+          }
+          SoLoud.instance.seek(handle, start);
+        });
+      }
+      return;
     }
-
-    final playDuration = durationMs ??
-        (SoLoud.instance.getLength(source).inMilliseconds);
 
     Future.delayed(Duration(milliseconds: playDuration), () {
       if (SoLoud.instance.getIsValidVoiceHandle(handle)) {
@@ -440,6 +487,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
       if (SoLoud.instance.getIsValidVoiceHandle(h)) await SoLoud.instance.stop(h);
     }
     _activeHandles.clear();
+    _loopHandles.clear();
     NotificationService.hideNotification();
     if (mounted) setState(() => _stopSignal++);
   }
@@ -1444,142 +1492,98 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
   // ── Clip management ───────────────────────────────────────────────────────
 
-  /// Shared header used by both option sheets.
-  Widget _buildSheetHeader(SoundModel sound) => Builder(
-    builder: (ctx) {
-      final c = Theme.of(ctx).extension<AppColors>()!;
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const SizedBox(height: 8),
-          Container(
-            width: 36, height: 4,
-            decoration: BoxDecoration(
-              color: c.handleBar,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(children: [
-              Text(sound.emoji, style: const TextStyle(fontSize: 28)),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(sound.name,
-                    style: TextStyle(
-                        color: c.textPrimary,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600)),
-              ),
-            ]),
-          ),
-          const SizedBox(height: 16),
-          Divider(color: c.border, height: 1),
-        ],
-      );
-    },
-  );
-
-  /// Options sheet for built-in sounds (favorite + boards + reset plays).
-  Future<void> _showSoundOptions(SoundModel sound) async {
-    final isFav = _favorites.contains(sound.id);
+  /// The long-press sheet: preview, favourite / share / boards / widget, and
+  /// per-sound loop and speed. User clips also get edit, colour and delete.
+  Future<void> _showSoundSheet(SoundModel sound) async {
+    final pinned = await _isPinned(sound.id);
+    if (!mounted) return;
+    final clip = sound.isUserClip;
     final hasPlays = (_playCounts[sound.id] ?? 0) > 0;
-    await showModalBottomSheet(
+    final color = sound.customColor != null
+        ? Color(sound.customColor!)
+        : sound.category == 'My Clips'
+            ? Theme.of(context).colorScheme.primary
+            : _categoryAccent(sound.category);
+
+    await showModalBottomSheet<void>(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildSheetHeader(sound),
-            _SheetOption(
-              icon: isFav ? Icons.star_rounded : Icons.star_outline_rounded,
-              label: isFav ? 'Remove from favorites' : 'Add to favorites',
-              color: isFav ? Colors.amber : null,
-              onTap: () { Navigator.pop(ctx); _toggleFavorite(sound); },
-            ),
-            _SheetOption(
-              icon: Icons.share_rounded,
-              label: 'Share sound',
-              onTap: () { Navigator.pop(ctx); _shareSound(sound); },
-            ),
-            _SheetOption(
-              icon: Icons.dashboard_customize_rounded,
-              label: 'Manage boards',
-              onTap: () { Navigator.pop(ctx); _showManageBoardsSheet(sound); },
-            ),
-            if (hasPlays)
-              _SheetOption(
-                icon: Icons.refresh_rounded,
-                label: 'Reset play count',
-                onTap: () { Navigator.pop(ctx); _resetPlayCount(sound); },
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+      isScrollControlled: true,
+      builder: (ctx) {
+        void then(VoidCallback action) {
+          Navigator.pop(ctx);
+          action();
+        }
+
+        return SoundSheet(
+          sound: sound,
+          source: _preloaded[sound.id],
+          duration: _durations[sound.id] ?? 0,
+          playCount: _playCounts[sound.id] ?? 0,
+          categoryColor: color,
+          isFavorite: _favorites.contains(sound.id),
+          isPinned: pinned,
+          onToggleFavorite: () => _toggleFavorite(sound),
+          onShare: () => clip ? _shareClip(sound) : _shareSound(sound),
+          onBoards: () => then(() => _showManageBoardsSheet(sound)),
+          onTogglePin: () => _togglePin(sound),
+          onManageWidget: () => then(_openWidgetSounds),
+          onResetPlays: hasPlays ? () => then(() => _resetPlayCount(sound)) : null,
+          onEdit: clip ? () => then(() => _editUserClip(sound)) : null,
+          onColor: clip ? () => then(() => _showColorPicker(sound)) : null,
+          onDelete: clip ? () => then(() => _deleteUserClip(sound)) : null,
+        );
+      },
     );
+    // Loop / speed may have changed — refresh the button badges.
+    if (mounted) setState(() {});
   }
 
-  /// Options sheet for user clips (favorite + boards + reset plays + edit + color + share + delete).
-  Future<void> _showClipOptions(SoundModel clip) async {
-    final isFav = _favorites.contains(clip.id);
-    final hasPlays = (_playCounts[clip.id] ?? 0) > 0;
-    await showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildSheetHeader(clip),
-            _SheetOption(
-              icon: isFav ? Icons.star_rounded : Icons.star_outline_rounded,
-              label: isFav ? 'Remove from favorites' : 'Add to favorites',
-              color: isFav ? Colors.amber : null,
-              onTap: () { Navigator.pop(ctx); _toggleFavorite(clip); },
-            ),
-            _SheetOption(
-              icon: Icons.dashboard_customize_rounded,
-              label: 'Manage boards',
-              onTap: () { Navigator.pop(ctx); _showManageBoardsSheet(clip); },
-            ),
-            if (hasPlays)
-              _SheetOption(
-                icon: Icons.refresh_rounded,
-                label: 'Reset play count',
-                onTap: () { Navigator.pop(ctx); _resetPlayCount(clip); },
-              ),
-            _SheetOption(
-              icon: Icons.edit_rounded,
-              label: 'Edit clip',
-              onTap: () { Navigator.pop(ctx); _editUserClip(clip); },
-            ),
-            _SheetOption(
-              icon: Icons.palette_outlined,
-              label: 'Change color',
-              onTap: () { Navigator.pop(ctx); _showColorPicker(clip); },
-            ),
-            _SheetOption(
-              icon: Icons.share_rounded,
-              label: 'Share clip',
-              onTap: () { Navigator.pop(ctx); _shareClip(clip); },
-            ),
-            _SheetOption(
-              icon: Icons.delete_outline_rounded,
-              label: 'Delete clip',
-              color: Colors.redAccent,
-              onTap: () { Navigator.pop(ctx); _deleteUserClip(clip); },
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+  // ── Pin to widget ───────────────────────────────────────────────────────
+
+  Future<bool> _isPinned(String id) async {
+    final choice = await QuickSounds.loadChoice();
+    return choice.mode == WidgetSoundsMode.custom && choice.ids.contains(id);
+  }
+
+  /// Adds or removes [sound] from the widget's custom list. The first pin
+  /// switches the widget from Automatic to Custom, starting from what it
+  /// shows today with this sound first.
+  Future<PinResult> _togglePin(SoundModel sound) async {
+    final choice = await QuickSounds.loadChoice();
+    final custom = choice.mode == WidgetSoundsMode.custom && choice.ids.isNotEmpty;
+    var ids = [...choice.ids];
+    PinResult result;
+
+    if (custom && ids.contains(sound.id)) {
+      ids.remove(sound.id);
+      result = PinResult.unpinned;
+    } else if (!custom) {
+      final showing = QuickSounds.pick(
+        all: _allSounds,
+        favorites: _favorites,
+        playCounts: _playCounts,
+      ).map((s) => s.id).where((id) => id != sound.id);
+      ids = [sound.id, ...showing].take(QuickSounds.maxSounds).toList();
+      result = PinResult.pinned;
+    } else if (ids.length >= QuickSounds.maxSounds) {
+      return PinResult.full;
+    } else {
+      ids.insert(0, sound.id);
+      result = PinResult.pinned;
+    }
+
+    await QuickSounds.saveChoice(
+      ids.isEmpty ? WidgetSoundsMode.automatic : WidgetSoundsMode.custom,
+      ids,
+    );
+    _syncQuickSounds();
+    return result;
+  }
+
+  Future<void> _openWidgetSounds() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const WidgetSoundsScreen()),
     );
   }
 
@@ -1667,6 +1671,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     _durations.remove(clip.id);
     await ClipRepository.delete(clip.id, clip.filePath!);
     await ClipRepository.removeSoundFromAllScenes(clip.id);
+    await SoundPrefs.forget(clip.id);
     setState(() {
       _userClips.removeWhere((c) => c.id == clip.id);
       _recentlyPlayed.removeWhere((s) => s.id == clip.id);
@@ -1912,8 +1917,24 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
   // ── Bottom tabs ───────────────────────────────────────────────────────────
 
-  Future<void> _open(Widget screen) =>
-      Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+  /// Opens a tool screen. Some of them can create clips (Voice Memo →
+  /// Add to soundboard), so pick up any new ones on the way back.
+  Future<void> _open(Widget screen) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+    await _reloadUserClips();
+  }
+
+  Future<void> _reloadUserClips() async {
+    try {
+      final updated = await ClipRepository.getAll();
+      final newClips =
+          updated.where((c) => !_preloaded.containsKey(c.id)).toList();
+      await _preloadAll(newClips);
+      if (!mounted) return;
+      setState(() => _userClips = updated);
+      _syncQuickSounds();
+    } catch (_) {}
+  }
 
   Widget _buildToolsHub() {
     final accent = Theme.of(context).colorScheme.primary;
@@ -2038,7 +2059,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
     void nav(Widget screen) {
       Navigator.pop(context);
-      Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+      _open(screen);
     }
 
     return Drawer(
@@ -2524,9 +2545,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                         itemBuilder: (context, i) {
                           final sound = _filtered[i];
                           return GestureDetector(
-                            onLongPress: sound.isUserClip
-                                ? () => _showClipOptions(sound)
-                                : () => _showSoundOptions(sound),
+                            onLongPress: () => _showSoundSheet(sound),
                             child: SoundButton(
                               sound: sound,
                               duration: _durations[sound.id] ?? 0,
@@ -2540,6 +2559,9 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                               playCount: _playCounts[sound.id] ?? 0,
                               highlightQuery: _isSearching ? _searchQuery : '',
                               density: density,
+                              speed: SoundPrefs.speedOf(sound.id),
+                              loopEnabled: SoundPrefs.loops(sound.id),
+                              looping: _loopHandles.containsKey(sound.id),
                             ),
                           );
                         },

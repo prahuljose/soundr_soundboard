@@ -24,6 +24,12 @@ class SoundButton extends StatefulWidget {
   final String highlightQuery;
   /// Scales the emoji, text and padding to match the chosen grid size.
   final GridDensity density;
+  /// Playback speed set in the sound's sheet (1.0 = normal).
+  final double speed;
+  /// Loop is switched on for this sound.
+  final bool loopEnabled;
+  /// The sound is looping right now (tap again to stop).
+  final bool looping;
 
   const SoundButton({
     super.key,
@@ -38,6 +44,9 @@ class SoundButton extends StatefulWidget {
     this.excludeFromStopOthers = false,
     this.highlightQuery = '',
     this.density = GridDensity.normal,
+    this.speed = 1.0,
+    this.loopEnabled = false,
+    this.looping = false,
   });
 
   @override
@@ -80,7 +89,8 @@ class _SoundButtonState extends State<SoundButton>
   @override
   void didUpdateWidget(covariant SoundButton oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.stopSignal != widget.stopSignal) {
+    if (oldWidget.stopSignal != widget.stopSignal ||
+        (oldWidget.looping && !widget.looping)) {
       _resetPlayback();
     } else if (oldWidget.stopOthersSignal != widget.stopOthersSignal &&
                !widget.excludeFromStopOthers) {
@@ -95,16 +105,22 @@ class _SoundButtonState extends State<SoundButton>
     _startPlaybackVisuals();
   }
 
+  /// Length of one play at the chosen speed.
+  double get _length => widget.duration / widget.speed;
+
   void _startPlaybackVisuals() {
     _timer?.cancel();
     setState(() {
       _isPlaying = true;
-      _remaining = widget.duration;
+      _remaining = _length;
     });
     const tick = Duration(milliseconds: 16);
     _timer = Timer.periodic(tick, (t) {
       final next = _remaining - tick.inMilliseconds / 1000;
-      if (next <= 0) {
+      if (next <= 0 && widget.looping) {
+        // Still looping: run the progress bar round again.
+        if (mounted) setState(() => _remaining = _length);
+      } else if (next <= 0) {
         t.cancel();
         if (mounted) setState(() { _isPlaying = false; _remaining = 0; });
       } else {
@@ -236,8 +252,8 @@ class _SoundButtonState extends State<SoundButton>
     final starUnfavColor = isDark ? Colors.white.withValues(alpha: 0.2) : c.textMuted;
 
     final m = _metrics;
-    final progress = widget.duration > 0
-        ? (1.0 - _remaining / widget.duration).clamp(0.0, 1.0)
+    final progress = _length > 0
+        ? (1.0 - _remaining / _length).clamp(0.0, 1.0)
         : 0.0;
 
     return Semantics(
@@ -348,7 +364,7 @@ class _SoundButtonState extends State<SoundButton>
                               _isPlaying
                                   ? '${_remaining.toStringAsFixed(1)}s'
                                   : widget.duration > 0
-                                      ? '${widget.duration.toStringAsFixed(1)}s'
+                                      ? '${_length.toStringAsFixed(1)}s'
                                       : '—',
                               style: TextStyle(
                                 fontSize: m.meta,
@@ -358,6 +374,25 @@ class _SoundButtonState extends State<SoundButton>
                                     : dimColor,
                               ),
                             ),
+                            if (widget.loopEnabled) ...[
+                              const SizedBox(width: 4),
+                              Icon(Icons.repeat_rounded,
+                                  size: m.meta + 2,
+                                  color: widget.looping ? _accent : dimColor),
+                            ],
+                            if (widget.speed != 1.0) ...[
+                              const SizedBox(width: 4),
+                              Text(
+                                widget.speed == widget.speed.roundToDouble()
+                                    ? '${widget.speed.toInt()}×'
+                                    : '${widget.speed}×',
+                                style: TextStyle(
+                                  fontSize: m.meta,
+                                  fontWeight: FontWeight.w700,
+                                  color: dimColor,
+                                ),
+                              ),
+                            ],
                             const Spacer(),
                             // Play count badge — shown once a sound has been played
                             if (widget.playCount > 0)
@@ -387,7 +422,13 @@ class _SoundButtonState extends State<SoundButton>
     final buffer = StringBuffer(widget.sound.name);
     buffer.write(', ${widget.sound.category}');
     if (widget.duration > 0) {
-      buffer.write(', ${widget.duration.toStringAsFixed(1)} seconds');
+      buffer.write(', ${_length.toStringAsFixed(1)} seconds');
+    }
+    if (widget.speed != 1.0) buffer.write(', ${widget.speed} times speed');
+    if (widget.looping) {
+      buffer.write(', looping, tap to stop');
+    } else if (widget.loopEnabled) {
+      buffer.write(', loops');
     }
     if (widget.isFavorited) buffer.write(', favorited');
     if (widget.playCount > 0) {

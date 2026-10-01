@@ -8,7 +8,8 @@ import '../theme/app_colors.dart';
 import '../widgets/first_run_tour.dart';
 import 'widget_sounds_screen.dart';
 
-/// All app preferences in one place. Opened from the drawer.
+/// All app preferences in one place. Pushed from the drawer, or shown as the
+/// last bottom tab (no back button) when the user picked tabs.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -18,6 +19,19 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen>
     with WidgetsBindingObserver {
+  /// The "On" status colour for notifications (darkened in light mode).
+  static const _onGreen = Color(0xFF7FE0C2);
+
+  /// Friendly names for [AppSettings.accentPresets], read by screen readers.
+  static const _accentNames = {
+    0xFF6C63FF: 'Violet',
+    0xFF2196F3: 'Blue',
+    0xFF00BCD4: 'Cyan',
+    0xFF4CAF50: 'Green',
+    0xFFFF9800: 'Orange',
+    0xFFE91E63: 'Pink',
+  };
+
   bool _notificationsGranted = true;
   String _widgetSummary = 'Automatic · favourites first';
 
@@ -30,13 +44,15 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _refreshWidgetSummary() async {
-    final choice = await QuickSounds.loadChoice();
-    if (!mounted) return;
-    final n = choice.ids.length;
-    setState(() => _widgetSummary =
-        choice.mode == WidgetSoundsMode.custom && n > 0
-            ? 'Custom · $n ${n == 1 ? 'sound' : 'sounds'}, your order'
-            : 'Automatic · favourites first');
+    try {
+      final choice = await QuickSounds.loadChoice();
+      if (!mounted) return;
+      final n = choice.ids.length;
+      setState(() => _widgetSummary =
+          choice.mode == WidgetSoundsMode.custom && n > 0
+              ? 'Custom · $n ${n == 1 ? 'sound' : 'sounds'}, your order'
+              : 'Automatic · favourites first');
+    } catch (_) {/* keep the default summary */}
   }
 
   Future<void> _openWidgetSounds() async {
@@ -78,12 +94,6 @@ class _SettingsScreenState extends State<SettingsScreen>
       'Tap Widgets and find Soundr.',
       'Drag "Soundr quick sounds" onto your home screen.',
     ]);
-  }
-
-  void _setNavStyle({required bool tabs}) {
-    if (AppSettings.useTabs.value == tabs) return;
-    Haptics.selection();
-    AppSettings.useTabs.value = tabs;
   }
 
   void _showHowTo(String title, List<String> steps) {
@@ -138,115 +148,154 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
+  // ── Setters ─────────────────────────────────────────────────────────────────
+
+  void _setThemeMode(ThemeMode mode) {
+    if (AppSettings.themeMode.value == mode) return;
+    Haptics.selection();
+    AppSettings.themeMode.value = mode;
+  }
+
+  void _setAccent(Color color) {
+    if (AppSettings.accent.value == color) return;
+    Haptics.selection();
+    AppSettings.accent.value = color;
+  }
+
+  void _setNavStyle({required bool tabs}) {
+    if (AppSettings.useTabs.value == tabs) return;
+    Haptics.selection();
+    AppSettings.useTabs.value = tabs;
+  }
+
+  void _setDensity(GridDensity d) {
+    if (AppSettings.gridDensity.value == d) return;
+    Haptics.selection();
+    AppSettings.gridDensity.value = d;
+  }
+
+  // ── Build ───────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
-    final accent = Theme.of(context).colorScheme.primary;
+    final light = Theme.of(context).brightness == Brightness.light;
+    // Pushed from the drawer → back arrow. As a bottom tab there is nothing
+    // to go back to, so the bar collapses to just the status-bar inset.
+    final canPop = ModalRoute.of(context)?.canPop ?? false;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Settings',
-            style: TextStyle(
-                color: c.textPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.w700)),
+        automaticallyImplyLeading: canPop,
+        toolbarHeight: canPop ? kToolbarHeight : 0,
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+        padding: EdgeInsets.fromLTRB(16, canPop ? 0 : 22, 16, 32),
         children: [
-          // ── Appearance ────────────────────────────────────────────────────
-          const _SectionLabel('APPEARANCE'),
-          _Card(children: [
-            ValueListenableBuilder<ThemeMode>(
-              valueListenable: AppSettings.themeMode,
-              builder: (context, mode, _) {
-                final isDark = mode == ThemeMode.dark;
-                return _SwitchRow(
-                  icon: isDark
-                      ? Icons.dark_mode_rounded
-                      : Icons.light_mode_rounded,
-                  title: 'Dark mode',
-                  value: isDark,
-                  onChanged: (v) => AppSettings.themeMode.value =
-                      v ? ThemeMode.dark : ThemeMode.light,
-                );
-              },
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
+            child: Semantics(
+              header: true,
+              child: Text('Settings',
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.8,
+                    height: 1.15,
+                  )),
             ),
-            _Divider(c),
+          ),
+
+          // ── Appearance ────────────────────────────────────────────────────
+          const _SectionLabel('APPEARANCE', top: 18),
+          _Card(children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Accent colour',
-                      style: TextStyle(color: c.textPrimary, fontSize: 15)),
-                  const SizedBox(height: 12),
-                  ValueListenableBuilder<Color>(
-                    valueListenable: AppSettings.accent,
-                    builder: (context, current, _) => Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: AppSettings.accentPresets.map((color) {
-                        final selected = current == color;
-                        return Semantics(
-                          button: true,
-                          selected: selected,
-                          label: 'Accent colour',
-                          child: GestureDetector(
-                            onTap: () => AppSettings.accent.value = color,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: color,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: selected
-                                      ? c.textPrimary
-                                      : Colors.transparent,
-                                  width: 2.5,
-                                ),
-                                boxShadow: selected
-                                    ? [
-                                        BoxShadow(
-                                            color: color.withValues(alpha: 0.5),
-                                            blurRadius: 8)
-                                      ]
-                                    : [],
-                              ),
-                              child: selected
-                                  ? const Icon(Icons.check_rounded,
-                                      size: 16, color: Colors.white)
-                                  : null,
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ],
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: ValueListenableBuilder<ThemeMode>(
+                valueListenable: AppSettings.themeMode,
+                builder: (context, mode, _) => _Segmented<ThemeMode>(
+                  label: 'Theme',
+                  expand: true,
+                  pillHeight: 38,
+                  selected: mode,
+                  onChanged: _setThemeMode,
+                  options: const [
+                    _Seg(ThemeMode.dark, 'Dark'),
+                    _Seg(ThemeMode.light, 'Light'),
+                    _Seg(ThemeMode.system, 'System',
+                        semanticLabel: 'Match system'),
+                  ],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 10, 4),
+              child: ValueListenableBuilder<Color>(
+                valueListenable: AppSettings.accent,
+                builder: (context, current, _) =>
+                    LayoutBuilder(builder: (context, box) {
+                  const labelW = 64.0;
+                  const presets = AppSettings.accentPresets;
+                  final swatches = [
+                    for (var i = 0; i < presets.length; i++)
+                      _AccentSwatch(
+                        color: presets[i],
+                        name: _accentNames[presets[i].toARGB32()] ??
+                            'Colour ${i + 1}',
+                        selected: current.toARGB32() == presets[i].toARGB32(),
+                        onTap: () => _setAccent(presets[i]),
+                      ),
+                  ];
+                  final label = Text('Accent',
+                      style: TextStyle(color: c.textPrimary, fontSize: 15));
+                  // One row when it fits; otherwise the swatches get their
+                  // own line so each keeps a full 44px target.
+                  if (box.maxWidth >= labelW + presets.length * 44) {
+                    return Row(children: [
+                      Expanded(child: label),
+                      ...swatches,
+                    ]);
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10, bottom: 2),
+                        child: label,
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: swatches,
+                      ),
+                    ],
+                  );
+                }),
               ),
             ),
           ]),
 
-          // ── Navigation ────────────────────────────────────────────────────
-          const _SectionLabel('NAVIGATION'),
+          // ── Layout ────────────────────────────────────────────────────────
+          const _SectionLabel('LAYOUT'),
           _Card(children: [
+            // Menu style keeps its picture previews — easier to choose
+            // between layouts by seeing them.
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Menu style',
-                      style: TextStyle(color: c.textPrimary, fontSize: 15)),
-                  const SizedBox(height: 2),
-                  Text('Where Zen Mode, Morse, games and tools live',
-                      style: TextStyle(color: c.textMuted, fontSize: 12)),
-                  const SizedBox(height: 14),
+                  Builder(builder: (context) {
+                    final c = Theme.of(context).extension<AppColors>()!;
+                    return Text('Menu style',
+                        style: TextStyle(color: c.textPrimary, fontSize: 15));
+                  }),
+                  const SizedBox(height: 12),
                   ValueListenableBuilder<bool>(
                     valueListenable: AppSettings.useTabs,
-                    builder: (context, tabs, _) => Row(
-                      children: [
+                    builder: (context, tabs, _) {
+                      final accent = Theme.of(context).colorScheme.primary;
+                      return Row(children: [
                         Expanded(
                           child: _NavOption(
                             tabs: false,
@@ -264,62 +313,54 @@ class _SettingsScreenState extends State<SettingsScreen>
                             onTap: () => _setNavStyle(tabs: true),
                           ),
                         ),
-                      ],
-                    ),
+                      ]);
+                    },
                   ),
                 ],
               ),
             ),
-          ]),
-
-          // ── Soundboard ────────────────────────────────────────────────────
-          const _SectionLabel('SOUNDBOARD'),
-          _Card(children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Button size',
-                      style: TextStyle(color: c.textPrimary, fontSize: 15)),
-                  const SizedBox(height: 2),
-                  Text('Tablets and landscape get extra columns automatically',
-                      style: TextStyle(color: c.textMuted, fontSize: 12)),
-                  const SizedBox(height: 14),
-                  ValueListenableBuilder<GridDensity>(
-                    valueListenable: AppSettings.gridDensity,
-                    builder: (context, density, _) => Row(
-                      children: [
-                        for (final d in GridDensity.values) ...[
-                          if (d != GridDensity.values.first)
-                            const SizedBox(width: 10),
-                          Expanded(
-                            child: _DensityOption(
-                              density: d,
-                              selected: d == density,
-                              accent: accent,
-                              onTap: () {
-                                Haptics.selection();
-                                AppSettings.gridDensity.value = d;
-                              },
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
+            const _Divider(),
+            _ControlRow(
+              title: 'Button size',
+              control: ValueListenableBuilder<GridDensity>(
+                valueListenable: AppSettings.gridDensity,
+                builder: (context, density, _) => _Segmented<GridDensity>(
+                  label: 'Button size',
+                  segmentWidth: 40,
+                  selected: density,
+                  onChanged: _setDensity,
+                  options: [
+                    for (final d in GridDensity.values)
+                      _Seg(
+                        d,
+                        switch (d) {
+                          GridDensity.compact => 'S',
+                          GridDensity.normal => 'M',
+                          GridDensity.large => 'L',
+                        },
+                        semanticLabel: switch (d) {
+                          GridDensity.compact => 'Small buttons',
+                          GridDensity.normal => 'Medium buttons',
+                          GridDensity.large => 'Large buttons',
+                        },
+                      ),
+                  ],
+                ),
               ),
             ),
           ]),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
+            child: Text(
+              'Tablets and landscape get extra columns automatically.',
+              style: TextStyle(color: c.textSecondary, fontSize: 12),
+            ),
+          ),
 
           // ── Feedback ──────────────────────────────────────────────────────
           const _SectionLabel('FEEDBACK'),
           _Card(children: [
             _SwitchRow(
-              icon: Haptics.enabled
-                  ? Icons.vibration_rounded
-                  : Icons.smartphone_rounded,
               title: 'Haptics',
               subtitle: 'Vibrate lightly on taps',
               value: Haptics.enabled,
@@ -329,18 +370,24 @@ class _SettingsScreenState extends State<SettingsScreen>
                 if (mounted) setState(() {});
               },
             ),
-            _Divider(c),
+            const _Divider(),
             _TapRow(
-              icon: _notificationsGranted
-                  ? Icons.notifications_active_rounded
-                  : Icons.notifications_off_rounded,
-              iconColor: _notificationsGranted
-                  ? null
-                  : Colors.redAccent.withValues(alpha: 0.85),
               title: 'Notifications',
               subtitle: _notificationsGranted
-                  ? 'Playback controls in the notification shade'
-                  : 'Disabled — tap to enable',
+                  ? 'Playback controls in the shade'
+                  : 'Off — tap to turn on in system settings',
+              trailing: Text(
+                _notificationsGranted ? 'On' : 'Off',
+                style: TextStyle(
+                  color: _notificationsGranted
+                      ? (light
+                          ? Color.lerp(_onGreen, Colors.black, 0.45)!
+                          : _onGreen)
+                      : c.textSecondary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               onTap: () async {
                 await openAppSettings();
                 await _refreshNotificationStatus();
@@ -352,38 +399,34 @@ class _SettingsScreenState extends State<SettingsScreen>
           const _SectionLabel('HOME SCREEN'),
           _Card(children: [
             _TapRow(
-              icon: Icons.widgets_rounded,
-              title: 'Add home-screen widget',
-              subtitle: 'Play your favourites without opening Soundr',
-              onTap: _addWidget,
-            ),
-            _Divider(c),
-            _TapRow(
-              icon: Icons.library_music_rounded,
-              title: 'Choose widget sounds',
+              title: 'Widget sounds',
               subtitle: _widgetSummary,
               onTap: _openWidgetSounds,
             ),
-
+            const _Divider(),
+            _TapRow(
+              title: 'Add widget to home screen',
+              subtitle: 'Play sounds without opening Soundr',
+              onTap: _addWidget,
+            ),
           ]),
 
           // ── Help ──────────────────────────────────────────────────────────
           const _SectionLabel('HELP'),
           _Card(children: [
             _TapRow(
-              icon: Icons.auto_awesome_rounded,
               title: 'Replay intro tour',
               subtitle: 'Tap, long-press, and where the tools live',
-              onTap: () => showFirstRunTour(context,
-                  tabs: AppSettings.useTabs.value),
+              onTap: () =>
+                  showFirstRunTour(context, tabs: AppSettings.useTabs.value),
             ),
           ]),
 
-          const SizedBox(height: 28),
+          const SizedBox(height: 22),
           Center(
             child: Text(
-              'Soundr  ·  Offline  ·  No ads  ·  No tracking',
-              style: TextStyle(color: c.textMuted, fontSize: 12),
+              'Soundr · offline · no ads · no tracking',
+              style: TextStyle(color: c.textSecondary, fontSize: 12),
             ),
           ),
         ],
@@ -396,20 +439,24 @@ class _SettingsScreenState extends State<SettingsScreen>
 
 class _SectionLabel extends StatelessWidget {
   final String text;
-  const _SectionLabel(this.text);
+  final double top;
+  const _SectionLabel(this.text, {this.top = 22});
 
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 20, 6, 8),
-      child: Text(text,
-          style: TextStyle(
-            color: c.textMuted,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.2,
-          )),
+      padding: EdgeInsets.fromLTRB(4, top, 4, 8),
+      child: Semantics(
+        header: true,
+        child: Text(text,
+            style: TextStyle(
+              color: c.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.4,
+            )),
+      ),
     );
   }
 }
@@ -424,8 +471,8 @@ class _Card extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: c.surfaceCard,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: c.borderSubtle),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: c.border),
       ),
       clipBehavior: Clip.antiAlias,
       child: Material(
@@ -437,85 +484,12 @@ class _Card extends StatelessWidget {
 }
 
 class _Divider extends StatelessWidget {
-  final AppColors c;
-  const _Divider(this.c);
-
-  @override
-  Widget build(BuildContext context) =>
-      Divider(height: 1, indent: 52, color: c.borderSubtle);
-}
-
-class _SwitchRow extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-
-  const _SwitchRow({
-    required this.icon,
-    required this.title,
-    required this.value,
-    required this.onChanged,
-    this.subtitle,
-  });
+  const _Divider();
 
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
-    final accent = Theme.of(context).colorScheme.primary;
-    return MergeSemantics(
-      child: InkWell(
-        onTap: () => onChanged(!value),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 10, 8),
-          child: Row(children: [
-            Icon(icon, size: 20, color: c.iconSecondary),
-            const SizedBox(width: 16),
-            Expanded(child: _RowText(title: title, subtitle: subtitle)),
-            Switch(
-              value: value,
-              onChanged: onChanged,
-              activeThumbColor: accent,
-              activeTrackColor: accent.withValues(alpha: 0.4),
-            ),
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
-class _TapRow extends StatelessWidget {
-  final IconData icon;
-  final Color? iconColor;
-  final String title;
-  final String? subtitle;
-  final VoidCallback onTap;
-
-  const _TapRow({
-    required this.icon,
-    required this.title,
-    required this.onTap,
-    this.subtitle,
-    this.iconColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = Theme.of(context).extension<AppColors>()!;
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
-        child: Row(children: [
-          Icon(icon, size: 20, color: iconColor ?? c.iconSecondary),
-          const SizedBox(width: 16),
-          Expanded(child: _RowText(title: title, subtitle: subtitle)),
-          Icon(Icons.chevron_right_rounded, size: 20, color: c.iconSecondary),
-        ]),
-      ),
-    );
+    return Divider(height: 1, thickness: 1, indent: 16, color: c.border);
   }
 }
 
@@ -529,104 +503,282 @@ class _RowText extends StatelessWidget {
     final c = Theme.of(context).extension<AppColors>()!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(title, style: TextStyle(color: c.textPrimary, fontSize: 15)),
         if (subtitle != null) ...[
           const SizedBox(height: 2),
           Text(subtitle!,
-              style: TextStyle(color: c.textMuted, fontSize: 12, height: 1.3)),
+              style: TextStyle(
+                  color: c.textSecondary, fontSize: 12.5, height: 1.3)),
         ],
       ],
     );
   }
 }
 
-/// One of the three button-size choices, drawn as a tiny grid preview.
-class _DensityOption extends StatelessWidget {
-  final GridDensity density;
-  final bool selected;
-  final Color accent;
+/// A title on the left, an inline control (segmented picker) on the right.
+class _ControlRow extends StatelessWidget {
+  final String title;
+  final Widget control;
+  const _ControlRow({required this.title, required this.control});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 14, 10),
+      child: Row(children: [
+        Expanded(
+          child: ExcludeSemantics(
+            child: Text(title,
+                style: TextStyle(color: c.textPrimary, fontSize: 15)),
+          ),
+        ),
+        const SizedBox(width: 12),
+        control,
+      ]),
+    );
+  }
+}
+
+class _SwitchRow extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _SwitchRow({
+    required this.title,
+    required this.value,
+    required this.onChanged,
+    this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return MergeSemantics(
+      child: InkWell(
+        onTap: () => onChanged(!value),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+          child: Row(children: [
+            Expanded(child: _RowText(title: title, subtitle: subtitle)),
+            const SizedBox(width: 12),
+            Switch(
+              value: value,
+              onChanged: onChanged,
+              activeTrackColor: scheme.primary,
+              activeThumbColor: scheme.onPrimary,
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _TapRow extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
   final VoidCallback onTap;
 
-  const _DensityOption({
-    required this.density,
+  const _TapRow({
+    required this.title,
+    required this.onTap,
+    this.subtitle,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return MergeSemantics(
+      child: InkWell(
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 56),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+            child: Row(children: [
+              Expanded(child: _RowText(title: title, subtitle: subtitle)),
+              if (trailing != null) ...[
+                const SizedBox(width: 12),
+                trailing!,
+              ],
+              const SizedBox(width: 6),
+              Icon(Icons.chevron_right_rounded,
+                  size: 20, color: c.iconSecondary),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One accent choice: a 32px swatch inside a 44px target, ringed when chosen.
+class _AccentSwatch extends StatelessWidget {
+  final Color color;
+  final String name;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _AccentSwatch({
+    required this.color,
+    required this.name,
     required this.selected,
-    required this.accent,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
-    final columns = switch (density) {
-      GridDensity.compact => 4,
-      GridDensity.normal => 3,
-      GridDensity.large => 2,
-    };
-    final cellColor =
-        selected ? accent.withValues(alpha: 0.55) : c.textPrimary.withValues(alpha: 0.14);
-
     return Semantics(
       button: true,
       selected: selected,
-      label: '${density.label} buttons',
-      child: GestureDetector(
+      inMutuallyExclusiveGroup: true,
+      label: '$name accent',
+      child: InkResponse(
         onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
-          decoration: BoxDecoration(
-            color: selected ? accent.withValues(alpha: 0.12) : c.surfaceElevated.withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: selected ? accent : c.border,
-              width: selected ? 1.5 : 1,
+        radius: 22,
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: 32,
+              height: 32,
+              padding: EdgeInsets.all(selected ? 3 : 0),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? c.textPrimary : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+              child: DecoratedBox(
+                decoration:
+                    BoxDecoration(color: color, shape: BoxShape.circle),
+              ),
             ),
           ),
-          child: ExcludeSemantics(
-            child: Column(
-              children: [
-                SizedBox(
-                  height: 34,
-                  child: LayoutBuilder(builder: (context, box) {
-                    const gap = 3.0;
-                    final cell = (box.maxWidth - gap * (columns - 1)) / columns;
-                    final rows = columns == 2 ? 1 : 2;
-                    final h = (34 - gap * (rows - 1)) / rows;
-                    return Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        for (var r = 0; r < rows; r++) ...[
-                          if (r > 0) const SizedBox(height: gap),
-                          Row(children: [
-                            for (var i = 0; i < columns; i++) ...[
-                              if (i > 0) const SizedBox(width: gap),
-                              Container(
-                                width: cell,
-                                height: h,
-                                decoration: BoxDecoration(
-                                  color: cellColor,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                              ),
-                            ],
-                          ]),
-                        ],
-                      ],
-                    );
-                  }),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  density.label,
-                  style: TextStyle(
-                    color: selected ? accent : c.textSecondary,
-                    fontSize: 13,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                  ),
-                ),
-              ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One option of a [_Segmented] control.
+class _Seg<T> {
+  final T value;
+  final String label;
+  final String? semanticLabel;
+  const _Seg(this.value, this.label, {this.semanticLabel});
+}
+
+/// A pill-track segmented picker: the chosen segment is filled with the
+/// accent. Each segment's hit area spans the full track height (≥44px).
+class _Segmented<T> extends StatelessWidget {
+  final String label;
+  final List<_Seg<T>> options;
+  final T selected;
+  final ValueChanged<T> onChanged;
+
+  /// Stretch the segments to fill the width equally.
+  final bool expand;
+
+  /// Fixed segment width (e.g. S / M / L); otherwise sized to the label.
+  final double? segmentWidth;
+  final double pillHeight;
+
+  const _Segmented({
+    required this.label,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+    this.expand = false,
+    this.segmentWidth,
+    this.pillHeight = 36,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = theme.extension<AppColors>()!;
+    final scheme = theme.colorScheme;
+    final light = theme.brightness == Brightness.light;
+    const pad = 4.0; // track inset around the pills
+    const gap = 4.0; // space between pills
+    final trackRadius = expand ? 14.0 : 12.0;
+    final pillRadius = expand ? 10.0 : 9.0;
+
+    Widget segment(int i) {
+      final o = options[i];
+      final isSel = o.value == selected;
+      final cell = Padding(
+        padding: EdgeInsets.fromLTRB(
+          i == 0 ? pad : gap / 2,
+          pad,
+          i == options.length - 1 ? pad : gap / 2,
+          pad,
+        ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          height: pillHeight,
+          width: segmentWidth,
+          padding: segmentWidth == null && !expand
+              ? const EdgeInsets.symmetric(horizontal: 12)
+              : EdgeInsets.zero,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isSel ? scheme.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(pillRadius),
+          ),
+          child: Text(
+            o.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: isSel ? scheme.onPrimary : c.textSecondary,
+              fontSize: 13,
+              fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
             ),
+          ),
+        ),
+      );
+      final button = Semantics(
+        button: true,
+        selected: isSel,
+        inMutuallyExclusiveGroup: true,
+        label: o.semanticLabel ?? o.label,
+        excludeSemantics: true,
+        child: InkWell(
+          onTap: () => onChanged(o.value),
+          borderRadius: BorderRadius.circular(trackRadius),
+          child: cell,
+        ),
+      );
+      return expand ? Expanded(child: button) : button;
+    }
+
+    return Semantics(
+      container: true,
+      label: label,
+      child: Container(
+        decoration: BoxDecoration(
+          color: light ? c.surfaceElevated : c.scaffoldBg,
+          borderRadius: BorderRadius.circular(trackRadius),
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: Row(
+            mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+            children: [for (var i = 0; i < options.length; i++) segment(i)],
           ),
         ),
       ),

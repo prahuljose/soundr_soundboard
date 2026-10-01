@@ -45,12 +45,13 @@ class AppSettings {
     Color(0xFFE91E63),
   ];
 
+  /// Dark (the default), light, or follow the system setting.
   static final themeMode = ValueNotifier(ThemeMode.dark);
   static final accent = ValueNotifier<Color>(defaultAccent);
   static final gridDensity = ValueNotifier(GridDensity.normal);
 
   /// Bottom tabs (true) or the side menu (false, the default). The user
-  /// picks in Settings > Navigation.
+  /// picks in Settings > Layout.
   static final useTabs = ValueNotifier(false);
 
   /// Whether the first-run tour has been shown (or skipped).
@@ -65,7 +66,11 @@ class AppSettings {
   static Future<void> load() async {
     try {
       final theme = await ClipRepository.getString(_kTheme);
-      if (theme == 'light') themeMode.value = ThemeMode.light;
+      themeMode.value = switch (theme) {
+        'light' => ThemeMode.light,
+        'system' => ThemeMode.system,
+        _ => ThemeMode.dark,
+      };
       final accentValue = await ClipRepository.getInt(_kAccent);
       if (accentValue != null) accent.value = Color(accentValue);
       gridDensity.value =
@@ -74,8 +79,9 @@ class AppSettings {
       useTabs.value = await ClipRepository.getBool(_kTabs);
     } catch (_) {/* first launch or DB unavailable — keep defaults */}
 
-    themeMode.addListener(() => _save(() => ClipRepository.setString(
-        _kTheme, themeMode.value == ThemeMode.light ? 'light' : 'dark')));
+    // Stored as 'dark' | 'light' | 'system' (ThemeMode.name).
+    themeMode.addListener(() => _save(
+        () => ClipRepository.setString(_kTheme, themeMode.value.name)));
     accent.addListener(() => _save(
         () => ClipRepository.setInt(_kAccent, accent.value.toARGB32())));
     gridDensity.addListener(() => _save(
