@@ -7,6 +7,7 @@ import 'package:flutter_soloud/flutter_soloud.dart';
 
 import '../services/haptics.dart';
 import '../theme/app_colors.dart';
+import '../widgets/metronome_widgets.dart';
 
 // ---------------------------------------------------------------------------
 // WAV generator
@@ -73,12 +74,10 @@ Uint8List _buildSineWav({
 
 String _tempoName(int bpm) {
   if (bpm < 60) return 'Largo';
-  if (bpm < 67) return 'Larghetto';
   if (bpm < 76) return 'Adagio';
   if (bpm < 108) return 'Andante';
   if (bpm < 120) return 'Moderato';
-  if (bpm < 156) return 'Allegro';
-  if (bpm < 168) return 'Vivace';
+  if (bpm < 168) return 'Allegro';
   if (bpm < 200) return 'Presto';
   return 'Prestissimo';
 }
@@ -88,13 +87,27 @@ String _tempoName(int bpm) {
 // ---------------------------------------------------------------------------
 
 class MetronomeScreen extends StatefulWidget {
-  const MetronomeScreen({super.key});
+  const MetronomeScreen({super.key, @visibleForTesting this.debugSoundReady = false});
+
+  /// Tests only: treat the click sounds as loaded (the audio engine doesn't
+  /// exist under `flutter test`), so the play button is enabled.
+  final bool debugSoundReady;
 
   @override
   State<MetronomeScreen> createState() => _MetronomeScreenState();
 }
 
 class _MetronomeScreenState extends State<MetronomeScreen> {
+  static const int _minBpm = 40;
+  static const int _maxBpm = 240;
+
+  static const List<(int, String)> _signatures = [
+    (2, '2/4'),
+    (3, '3/4'),
+    (4, '4/4'),
+    (6, '6/8'),
+  ];
+
   // BPM & signature
   int _bpm = 120;
   int _beatsPerBar = 4;
@@ -111,7 +124,7 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
   // Audio
   AudioSource? _clickSrc;
   AudioSource? _accentSrc;
-  bool _soundReady = false;
+  late bool _soundReady = widget.debugSoundReady;
 
   // Tap tempo
   final List<DateTime> _taps = [];
@@ -208,24 +221,39 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // Tap tempo
+  // Tempo changes
   // ---------------------------------------------------------------------------
 
+  /// −/+ buttons: one BPM per step. The metronome restarts on commit (tap, or
+  /// release after press-and-hold) rather than on every repeated step.
+  void _nudge(int delta) {
+    final next = (_bpm + delta).clamp(_minBpm, _maxBpm);
+    if (next == _bpm) return;
+    Haptics.selection();
+    setState(() => _bpm = next);
+    _taps.clear();
+  }
+
+  /// Tap tempo: averages the last (up to) 4 intervals between taps. A pause of
+  /// more than 2 s starts a fresh measurement.
   void _onTapTempo() {
+    Haptics.light();
     final now = DateTime.now();
-    _taps.add(now);
-    // Keep last 8
-    if (_taps.length > 8) _taps.removeAt(0);
-    if (_taps.length >= 2) {
-      int totalMs = 0;
-      for (int i = 1; i < _taps.length; i++) {
-        totalMs += _taps[i].difference(_taps[i - 1]).inMilliseconds;
-      }
-      final double avgMs = totalMs / (_taps.length - 1);
-      final int newBpm = (60000 / avgMs).round().clamp(40, 240);
-      setState(() => _bpm = newBpm);
-      _restartIfRunning();
+    if (_taps.isNotEmpty &&
+        now.difference(_taps.last) > const Duration(seconds: 2)) {
+      _taps.clear();
     }
+    _taps.add(now);
+    while (_taps.length > 5) {
+      _taps.removeAt(0);
+    }
+    if (_taps.length < 2) return;
+    final double avgMs =
+        _taps.last.difference(_taps.first).inMicroseconds / 1000 / (_taps.length - 1);
+    if (avgMs <= 0) return;
+    final int newBpm = (60000 / avgMs).round().clamp(_minBpm, _maxBpm);
+    setState(() => _bpm = newBpm);
+    _restartIfRunning();
   }
 
   // ---------------------------------------------------------------------------
@@ -235,451 +263,194 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
-    final accent = Theme.of(context).colorScheme.primary;
+    final light = Theme.of(context).brightness == Brightness.light;
+    final tabular = [const FontFeature.tabularFigures()];
+    final sliderTint = metronomeStroke(context, lightDarken: 0.2);
 
     return Scaffold(
       backgroundColor: c.scaffoldBg,
       appBar: AppBar(
-        backgroundColor: c.scaffoldBg,
-        elevation: 0,
-        title: Text(
+        title: const Text(
           'Metronome',
-          style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w600),
+          style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
         ),
-        iconTheme: IconThemeData(color: c.textPrimary),
       ),
       body: SafeArea(
+        top: false,
         child: Column(
           children: [
             Expanded(
-              child: Center(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const SizedBox(height: 16),
-                      _BeatDotsRow(
-                        beatsPerBar: _beatsPerBar,
-                        running: _running,
-                        flash: _flash,
-                        lastBeat: _lastBeat,
-                        accent: accent,
-                        borderSubtle: c.borderSubtle,
-                      ),
-                      const SizedBox(height: 28),
-                      _BpmCard(
-                        bpm: _bpm,
-                        accent: accent,
-                        surfaceCard: c.surfaceCard,
-                        textPrimary: c.textPrimary,
-                        textSecondary: c.textSecondary,
-                        onDecrement: () {
-                          if (_bpm > 40) {
-                            setState(() => _bpm--);
-                            _taps.clear();
-                            _restartIfRunning();
-                          }
-                        },
-                        onIncrement: () {
-                          if (_bpm < 240) {
-                            setState(() => _bpm++);
-                            _taps.clear();
-                            _restartIfRunning();
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          activeTrackColor: accent,
-                          inactiveTrackColor: c.border,
-                          thumbColor: accent,
-                          overlayColor: accent.withValues(alpha: 0.15),
-                          trackHeight: 3,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 30),
+                    MetronomeBeatDots(
+                      beatsPerBar: _beatsPerBar,
+                      currentBeat: _running ? _lastBeat : -1,
+                      pulse: _flash,
+                    ),
+                    const SizedBox(height: 36),
+
+                    // ── BPM ──────────────────────────────────────────────
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        MetronomeStepButton(
+                          icon: Icons.remove_rounded,
+                          tooltip: 'Slower',
+                          onStep: _bpm > _minBpm ? () => _nudge(-1) : null,
+                          onCommit: _restartIfRunning,
                         ),
-                        child: Slider(
-                          value: _bpm.toDouble(),
-                          min: 40,
-                          max: 240,
-                          onChanged: (v) {
-                            setState(() {
-                              _bpm = v.round();
-                              _taps.clear();
-                            });
-                          },
-                          onChangeEnd: (_) => _restartIfRunning(),
+                        const SizedBox(width: 18),
+                        SizedBox(
+                          width: 170,
+                          child: Semantics(
+                            label: '$_bpm BPM, ${_tempoName(_bpm)}',
+                            excludeSemantics: true,
+                            child: Column(
+                              children: [
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    '$_bpm',
+                                    style: TextStyle(
+                                      color: c.textPrimary,
+                                      fontSize: 92,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: -3,
+                                      height: 1.0,
+                                      fontFeatures: tabular,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'BPM · ${_tempoName(_bpm)}',
+                                  style: TextStyle(
+                                    color: c.textSecondary,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
+                        const SizedBox(width: 18),
+                        MetronomeStepButton(
+                          icon: Icons.add_rounded,
+                          tooltip: 'Faster',
+                          onStep: _bpm < _maxBpm ? () => _nudge(1) : null,
+                          onCommit: _restartIfRunning,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 30),
+
+                    // ── Tempo slider ─────────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text('$_minBpm',
+                                style: TextStyle(
+                                  color: c.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  fontFeatures: tabular,
+                                )),
+                          ),
+                          Text('$_maxBpm',
+                              style: TextStyle(
+                                color: c.textSecondary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                fontFeatures: tabular,
+                              )),
+                        ],
                       ),
-                      const SizedBox(height: 20),
-                      _TimeSignatureRow(
-                        selected: _beatsPerBar,
-                        accent: accent,
-                        surfaceCard: c.surfaceCard,
-                        textPrimary: c.textPrimary,
-                        textSecondary: c.textSecondary,
-                        border: c.border,
-                        onSelect: (beats) {
+                    ),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        activeTrackColor: sliderTint,
+                        inactiveTrackColor: light ? c.border : c.surfaceElevated,
+                        thumbColor: sliderTint,
+                        overlayColor: kMetronomeTint.withValues(alpha: 0.18),
+                        trackHeight: 4,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
+                      ),
+                      child: Slider(
+                        value: _bpm.toDouble(),
+                        min: _minBpm.toDouble(),
+                        max: _maxBpm.toDouble(),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+                        semanticFormatterCallback: (v) => '${v.round()} BPM',
+                        onChanged: (v) {
                           setState(() {
-                            _beatsPerBar = beats;
-                            _currentBeat = 0;
+                            _bpm = v.round();
+                            _taps.clear();
                           });
-                          _restartIfRunning();
                         },
+                        onChangeEnd: (_) => _restartIfRunning(),
                       ),
-                      const SizedBox(height: 24),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 18),
+
+                    // ── Time signature ───────────────────────────────────
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
+                      child: Text(
+                        'TIME SIGNATURE',
+                        style: TextStyle(
+                          color: c.textMuted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.4,
+                        ),
+                      ),
+                    ),
+                    MetronomeSignaturePicker(
+                      options: _signatures,
+                      selected: _beatsPerBar,
+                      onSelect: (beats) {
+                        Haptics.selection();
+                        setState(() {
+                          _beatsPerBar = beats;
+                          _currentBeat = 0;
+                        });
+                        _restartIfRunning();
+                      },
+                    ),
+                    const SizedBox(height: 14),
+
+                    // ── Tap tempo ────────────────────────────────────────
+                    MetronomeTapPad(onTap: _onTapTempo),
+                  ],
                 ),
               ),
             ),
-            _BottomControls(
-              running: _running,
-              soundReady: _soundReady,
-              accent: accent,
-              surfaceCard: c.surfaceCard,
-              textPrimary: c.textPrimary,
-              border: c.border,
-              onTapTempo: _onTapTempo,
-              onStartStop: () {
-                if (_running) {
-                  _stop();
-                } else {
-                  _start();
-                }
-              },
+
+            // ── Play / stop ────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
+              child: MetronomePlayButton(
+                running: _running,
+                onPressed: _soundReady
+                    ? () {
+                        if (_running) {
+                          _stop();
+                        } else {
+                          _start();
+                        }
+                      }
+                    : null,
+              ),
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Beat dots row
-// ---------------------------------------------------------------------------
-
-class _BeatDotsRow extends StatelessWidget {
-  const _BeatDotsRow({
-    required this.beatsPerBar,
-    required this.running,
-    required this.flash,
-    required this.lastBeat,
-    required this.accent,
-    required this.borderSubtle,
-  });
-
-  final int beatsPerBar;
-  final bool running;
-  final bool flash;
-  final int lastBeat;
-  final Color accent;
-  final Color borderSubtle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(beatsPerBar, (i) {
-        final bool active = running && flash && lastBeat == i;
-        final Color color = active
-            ? (i == 0 ? accent : accent.withValues(alpha: 0.8))
-            : borderSubtle;
-        // Fixed outer size prevents the Row from reflowing on each beat.
-        // Only the inner circle scales via AnimatedContainer.
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          child: SizedBox(
-            width: 22,
-            height: 22,
-            child: Center(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 80),
-                width: active ? 22.0 : 13.0,
-                height: active ? 22.0 : 13.0,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-          ),
-        );
-      }),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// BPM card
-// ---------------------------------------------------------------------------
-
-class _BpmCard extends StatelessWidget {
-  const _BpmCard({
-    required this.bpm,
-    required this.accent,
-    required this.surfaceCard,
-    required this.textPrimary,
-    required this.textSecondary,
-    required this.onDecrement,
-    required this.onIncrement,
-  });
-
-  final int bpm;
-  final Color accent;
-  final Color surfaceCard;
-  final Color textPrimary;
-  final Color textSecondary;
-  final VoidCallback onDecrement;
-  final VoidCallback onIncrement;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: surfaceCard,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 8),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              IconButton(
-                onPressed: onDecrement,
-                icon: const Icon(Icons.remove_rounded),
-                iconSize: 28,
-                color: textPrimary,
-                splashRadius: 24,
-              ),
-              const SizedBox(width: 16),
-              Column(
-                children: [
-                  Text(
-                    '$bpm',
-                    style: TextStyle(
-                      fontSize: 80,
-                      fontWeight: FontWeight.w200,
-                      color: textPrimary,
-                      height: 1.0,
-                    ),
-                  ),
-                  Text(
-                    'BPM',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: textSecondary,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 16),
-              IconButton(
-                onPressed: onIncrement,
-                icon: const Icon(Icons.add_rounded),
-                iconSize: 28,
-                color: textPrimary,
-                splashRadius: 24,
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            _tempoName(bpm),
-            style: TextStyle(
-              fontSize: 15,
-              fontStyle: FontStyle.italic,
-              color: textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Time-signature pills
-// ---------------------------------------------------------------------------
-
-class _TimeSignatureRow extends StatelessWidget {
-  const _TimeSignatureRow({
-    required this.selected,
-    required this.accent,
-    required this.surfaceCard,
-    required this.textPrimary,
-    required this.textSecondary,
-    required this.border,
-    required this.onSelect,
-  });
-
-  final int selected;
-  final Color accent;
-  final Color surfaceCard;
-  final Color textPrimary;
-  final Color textSecondary;
-  final Color border;
-  final ValueChanged<int> onSelect;
-
-  static const List<(int, String)> _sigs = [
-    (2, '2/4'),
-    (3, '3/4'),
-    (4, '4/4'),
-    (6, '6/8'),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: _sigs.map((sig) {
-        final (beats, label) = sig;
-        final bool isSelected = selected == beats;
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 5),
-          child: GestureDetector(
-            onTap: () => onSelect(beats),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? accent.withValues(alpha: 0.18)
-                    : surfaceCard,
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: isSelected ? accent : border,
-                  width: isSelected ? 1.5 : 1.0,
-                ),
-              ),
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight:
-                      isSelected ? FontWeight.w600 : FontWeight.w400,
-                  color: isSelected ? accent : textSecondary,
-                ),
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Bottom controls
-// ---------------------------------------------------------------------------
-
-class _BottomControls extends StatelessWidget {
-  const _BottomControls({
-    required this.running,
-    required this.soundReady,
-    required this.accent,
-    required this.surfaceCard,
-    required this.textPrimary,
-    required this.border,
-    required this.onTapTempo,
-    required this.onStartStop,
-  });
-
-  final bool running;
-  final bool soundReady;
-  final Color accent;
-  final Color surfaceCard;
-  final Color textPrimary;
-  final Color border;
-  final VoidCallback onTapTempo;
-  final VoidCallback onStartStop;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Tap tempo
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: OutlinedButton(
-              onPressed: onTapTempo,
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: border),
-                foregroundColor: textPrimary,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-              child: const Text(
-                'TAP TEMPO',
-                style: TextStyle(
-                  letterSpacing: 1.5,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          // Start / Stop
-          SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: running
-                ? OutlinedButton(
-                    onPressed: soundReady ? onStartStop : null,
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: surfaceCard,
-                      side: BorderSide(color: border),
-                      foregroundColor: textPrimary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      disabledForegroundColor:
-                          textPrimary.withValues(alpha: 0.38),
-                    ),
-                    child: const Text(
-                      'STOP',
-                      style: TextStyle(
-                        letterSpacing: 1.5,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                      ),
-                    ),
-                  )
-                : ElevatedButton(
-                    onPressed: soundReady ? onStartStop : null,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      disabledBackgroundColor:
-                          accent.withValues(alpha: 0.38),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      'START',
-                      style: TextStyle(
-                        letterSpacing: 1.5,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                      ),
-                    ),
-                  ),
-          ),
-        ],
       ),
     );
   }
