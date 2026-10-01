@@ -1917,8 +1917,24 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
   // ── Bottom tabs ───────────────────────────────────────────────────────────
 
-  Future<void> _open(Widget screen) =>
-      Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+  /// Opens a tool screen. Some of them can create clips (Voice Memo →
+  /// Add to soundboard), so pick up any new ones on the way back.
+  Future<void> _open(Widget screen) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+    await _reloadUserClips();
+  }
+
+  Future<void> _reloadUserClips() async {
+    try {
+      final updated = await ClipRepository.getAll();
+      final newClips =
+          updated.where((c) => !_preloaded.containsKey(c.id)).toList();
+      await _preloadAll(newClips);
+      if (!mounted) return;
+      setState(() => _userClips = updated);
+      _syncQuickSounds();
+    } catch (_) {}
+  }
 
   Widget _buildToolsHub() {
     final accent = Theme.of(context).colorScheme.primary;
@@ -2043,7 +2059,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
     void nav(Widget screen) {
       Navigator.pop(context);
-      Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+      _open(screen);
     }
 
     return Drawer(
