@@ -35,6 +35,8 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
   double _trimStart = 0;
   double _trimEnd = 1;
   bool _isPlaying = false;
+  /// Current preview position in ms, while playing.
+  int? _playheadMs;
   bool _isLoading = true;
   bool _isSaving = false;
   Timer? _playStopTimer;
@@ -92,6 +94,8 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
 
   Future<void> _initPlayer() async {
     try {
+      // Frequent position updates so the waveform fills smoothly.
+      _playerController.updateFrequency = UpdateFrequency.high;
       await _playerController.preparePlayer(
         path: widget.filePath,
         shouldExtractWaveform: true,
@@ -104,7 +108,10 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
     final durationMs = await _playerController.getDuration(DurationType.max);
     _playerStateSub = _playerController.onPlayerStateChanged.listen((state) {
       if (!mounted) return;
-      setState(() => _isPlaying = state == PlayerState.playing);
+      setState(() {
+        _isPlaying = state == PlayerState.playing;
+        if (!_isPlaying) _playheadMs = null;
+      });
     });
     if (mounted) {
       final totalSec = math.max(0, durationMs) / 1000.0;
@@ -160,6 +167,10 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
       final startMs = (_trimStart * _totalDuration * 1000).round();
       final endMs = (_trimEnd * _totalDuration * 1000).round();
       await _playerController.seekTo(startMs);
+      if (mounted) setState(() => _playheadMs = startMs);
+      _playPositionSub = _playerController.onCurrentDurationChanged.listen((ms) {
+        if (mounted && _isPlaying) setState(() => _playheadMs = ms);
+      });
       await _playerController.startPlayer();
       _playStopTimer = Timer(Duration(milliseconds: endMs - startMs), () async {
         if (!mounted) return;
@@ -356,6 +367,9 @@ class _ClipEditorScreenState extends State<ClipEditorScreen> {
                     totalDuration: _totalDuration,
                     onStartChanged: _onTrimStartChanged,
                     onEndChanged: _onTrimEndChanged,
+                    playhead: _playheadMs != null && _totalDuration > 0
+                        ? (_playheadMs! / 1000 / _totalDuration).clamp(0.0, 1.0)
+                        : null,
                   ),
                 ),
                 const SizedBox(height: 6),

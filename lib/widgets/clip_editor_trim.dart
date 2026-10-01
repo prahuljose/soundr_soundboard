@@ -19,6 +19,10 @@ class ClipTrimWaveform extends StatefulWidget {
   final ValueChanged<double> onEndChanged;
   final double height;
 
+  /// Playback position (0..1 of the clip) while previewing, else null. The
+  /// selection lights up bar by bar up to here, like the old waveform did.
+  final double? playhead;
+
   /// Horizontal space either side of the waveform that still grabs a
   /// handle, so a handle at the very start/end is as easy to catch as one in
   /// the middle. The widget lays out [inset] wider than the waveform.
@@ -37,6 +41,7 @@ class ClipTrimWaveform extends StatefulWidget {
     required this.onEndChanged,
     this.height = 128,
     this.inset = 18,
+    this.playhead,
   });
 
   @override
@@ -130,6 +135,9 @@ class _ClipTrimWaveformState extends State<ClipTrimWaveform> {
                           alpha: light ? 0.2 : 0.16,
                         ),
                         selection: accent.withValues(alpha: light ? 0.12 : 0.1),
+                        upcoming: accent.withValues(alpha: 0.35),
+                        playheadColor: c.textPrimary,
+                        playhead: widget.playhead,
                         overhang: _overhang,
                       ),
                     ),
@@ -192,6 +200,9 @@ class _TrimWavePainter extends CustomPainter {
   final Color accent;
   final Color idle;
   final Color selection;
+  final Color upcoming;
+  final Color playheadColor;
+  final double? playhead;
   final double overhang;
 
   _TrimWavePainter({
@@ -201,6 +212,9 @@ class _TrimWavePainter extends CustomPainter {
     required this.accent,
     required this.idle,
     required this.selection,
+    required this.upcoming,
+    required this.playheadColor,
+    required this.playhead,
     required this.overhang,
   });
 
@@ -231,7 +245,13 @@ class _TrimWavePainter extends CustomPainter {
       for (var i = 0; i < levels.length; i++) {
         final centre = (i + 0.5) * slot;
         final bh = 4 + maxBar * levels[i].clamp(0.0, 1.0);
-        paint.color = centre >= startX && centre <= endX ? accent : idle;
+        final inSelection = centre >= startX && centre <= endX;
+        final playX = playhead == null ? null : playhead! * w;
+        paint.color = !inSelection
+            ? idle
+            : playX == null || centre <= playX
+                ? accent
+                : upcoming;
         canvas.drawRRect(
           RRect.fromRectAndRadius(
             Rect.fromCenter(
@@ -244,6 +264,18 @@ class _TrimWavePainter extends CustomPainter {
           paint,
         );
       }
+    }
+
+    // ── Playhead ─────────────────────────────────────────────────────────
+    if (playhead != null) {
+      final x = (playhead! * w).clamp(startX, endX);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x - 1, top, 2, waveH),
+          const Radius.circular(1),
+        ),
+        Paint()..color = playheadColor,
+      );
     }
 
     // ── Handles ──────────────────────────────────────────────────────────
@@ -266,5 +298,7 @@ class _TrimWavePainter extends CustomPainter {
       old.trimEnd != trimEnd ||
       old.accent != accent ||
       old.idle != idle ||
-      old.selection != selection;
+      old.selection != selection ||
+      old.upcoming != upcoming ||
+      old.playhead != playhead;
 }
