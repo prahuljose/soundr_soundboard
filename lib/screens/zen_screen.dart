@@ -109,7 +109,6 @@ class ZenDebugSeed {
   /// Saved mixes, name → (track id → volume), in chip order.
   final Map<String, Map<String, double>> presets;
   final String? selectedPreset;
-  final Set<String> favourites;
   final Set<String> loading;
 
   /// Show the preloading screen instead of the grid.
@@ -122,7 +121,6 @@ class ZenDebugSeed {
     this.sleepRemaining,
     this.presets = const {},
     this.selectedPreset,
-    this.favourites = const {},
     this.loading = const {},
     this.probing = false,
   });
@@ -197,9 +195,6 @@ class _ZenScreenState extends State<ZenScreen> {
   List<_ZenPreset> _presets = [];
   String? _selectedPresetId;
 
-  // Pinned / favourite track IDs
-  Set<String> _favourites = {};
-
   // Every handle is paused (the dock's Pause button)
   bool _paused = false;
   // Bumped on every pause/resume/stop so a pause fade that's been
@@ -262,7 +257,6 @@ class _ZenScreenState extends State<ZenScreen> {
 
   Future<void> _init() async {
     final presets = _loadPresets();
-    _loadFavourites();
     _loadStats();
     _loadSleepPrefs();
     _initNotifications().catchError((_) {});
@@ -275,7 +269,6 @@ class _ZenScreenState extends State<ZenScreen> {
     _isProbing = s.probing;
     _probeCount = s.probing ? 7 : _tracks.length;
     _available.addAll(_tracks.map((t) => t.id));
-    _favourites = {...s.favourites};
     var i = 0;
     for (final e in s.presets.entries) {
       final p = _ZenPreset(id: 'seed${i++}', name: e.key, volumes: Map.of(e.value));
@@ -786,44 +779,6 @@ class _ZenScreenState extends State<ZenScreen> {
       }
     }
     await Future.wait(ids.map(_startTrack));
-  }
-
-  // ── Favourites persistence ───────────────────────────────────────────────
-
-  Future<File> _favouritesFile() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}/zen_favourites.json');
-  }
-
-  Future<void> _loadFavourites() async {
-    try {
-      final file = await _favouritesFile();
-      if (await file.exists()) {
-        final list = jsonDecode(await file.readAsString()) as List;
-        if (mounted) {
-          setState(() => _favourites = list.cast<String>().toSet());
-        }
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _persistFavourites() async {
-    if (!_audio) return;
-    try {
-      final file = await _favouritesFile();
-      await file.writeAsString(jsonEncode(_favourites.toList()));
-    } catch (_) {}
-  }
-
-  void _toggleFavourite(String trackId) {
-    setState(() {
-      if (_favourites.contains(trackId)) {
-        _favourites.remove(trackId);
-      } else {
-        _favourites.add(trackId);
-      }
-    });
-    _persistFavourites();
   }
 
   // ── Preset persistence ──────────────────────────────────────────────────
@@ -1477,9 +1432,6 @@ class _ZenScreenState extends State<ZenScreen> {
     final dockVisible = playing.isNotEmpty;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     final current = _currentPreset;
-    final favourites = _tracks
-        .where((t) => _favourites.contains(t.id) && _available.contains(t.id))
-        .toList();
 
     // ── Main screen ───────────────────────────────────────────────────────
     return Scaffold(
@@ -1540,32 +1492,6 @@ class _ZenScreenState extends State<ZenScreen> {
                           ),
                         ),
 
-                      // ── Pinned sounds ───────────────────────────────────
-                      if (favourites.isNotEmpty)
-                        SliverToBoxAdapter(
-                          child: _ChipRow(
-                            top: 10,
-                            children: [
-                              Semantics(
-                                label: 'Pinned sounds',
-                                child: Padding(
-                                  padding: const EdgeInsets.only(right: 2),
-                                  child: Icon(Icons.star_rounded, size: 18, color: z.teal),
-                                ),
-                              ),
-                              for (final t in favourites)
-                                _ZenChip(
-                                  label: t.name,
-                                  emoji: t.emoji,
-                                  style: _handles.containsKey(t.id)
-                                      ? _ChipStyle.selected
-                                      : _ChipStyle.plain,
-                                  onTap: () => _toggle(t),
-                                ),
-                            ],
-                          ),
-                        ),
-
                       // ── Grid ────────────────────────────────────────────
                       SliverPadding(
                         padding: EdgeInsets.fromLTRB(
@@ -1599,8 +1525,6 @@ class _ZenScreenState extends State<ZenScreen> {
                                     : null,
                                 volume: _volumes[track.id] ?? 50.0,
                                 tileIndex: i,
-                                isFavourited: _favourites.contains(track.id),
-                                onToggleFavourite: () => _toggleFavourite(track.id),
                               );
                             },
                           ),
@@ -2249,7 +2173,6 @@ class _ChipRow extends StatelessWidget {
 
 class _ZenChip extends StatelessWidget {
   final String label;
-  final String? emoji;
   final IconData? icon;
   final _ChipStyle style;
   final double height;
@@ -2260,7 +2183,6 @@ class _ZenChip extends StatelessWidget {
     required this.label,
     required this.style,
     required this.onTap,
-    this.emoji,
     this.icon,
     this.onLongPress,
     this.height = 36,
@@ -2297,10 +2219,6 @@ class _ZenChip extends StatelessWidget {
                     Icon(icon, size: 17, color: fg),
                     const SizedBox(width: 4),
                   ],
-                  if (emoji != null) ...[
-                    Text(emoji!, style: const TextStyle(fontSize: 15, height: 1)),
-                    const SizedBox(width: 6),
-                  ],
                   Text(
                     label,
                     style: TextStyle(
@@ -2335,8 +2253,6 @@ class _ZenTile extends StatefulWidget {
   final VoidCallback? onLongPress;
   final double volume;   // 1–100
   final int tileIndex;
-  final bool isFavourited;
-  final VoidCallback onToggleFavourite;
 
   const _ZenTile({
     required this.track,
@@ -2349,8 +2265,6 @@ class _ZenTile extends StatefulWidget {
     required this.onLongPress,
     required this.volume,
     required this.tileIndex,
-    required this.isFavourited,
-    required this.onToggleFavourite,
   });
 
   @override
@@ -2444,7 +2358,6 @@ class _ZenTileState extends State<_ZenTile> with SingleTickerProviderStateMixin 
                     ),
                   ),
                 ),
-              const SizedBox(width: 26), // the star sits here
             ],
           ),
           const Spacer(),
@@ -2535,34 +2448,7 @@ class _ZenTileState extends State<_ZenTile> with SingleTickerProviderStateMixin 
                     ),
                   ),
 
-                // Star / favourite — top-right corner, generous tap target
-                if (widget.isAvailable)
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: Semantics(
-                      button: true,
-                      label: widget.isFavourited ? 'Unpin ${t.name}' : 'Pin ${t.name}',
-                      excludeSemantics: true,
-                      child: GestureDetector(
-                        onTap: widget.onToggleFavourite,
-                        behavior: HitTestBehavior.opaque,
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Icon(
-                            widget.isFavourited
-                                ? Icons.star_rounded
-                                : Icons.star_outline_rounded,
-                            size: 20,
-                            color: widget.isFavourited
-                                ? z.teal
-                                : c.iconSecondary.withValues(alpha: z.isDark ? 0.8 : 0.7),
-                          ),
-                        ),
-                      ),
-                    ),
-                  )
-                else
+                if (!widget.isAvailable)
                   // Coming soon badge
                   Positioned(
                     top: 14,
@@ -2938,13 +2824,6 @@ class _ZenInfoSheet extends StatelessWidget {
               title: 'Sleep timer',
               body: 'Tap the moon button to stop the mix after 15 minutes to 2 hours. '
                   'With "Fade out gently" on, it softens over the last minute.',
-              colors: colors,
-              accent: accent,
-            ),
-            _InfoItem(
-              emoji: '⭐',
-              title: 'Pin favourites',
-              body: 'Tap the star on a tile to pin it to the row above the grid.',
               colors: colors,
               accent: accent,
             ),
