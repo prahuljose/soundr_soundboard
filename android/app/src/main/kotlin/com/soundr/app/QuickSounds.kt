@@ -7,12 +7,15 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 /**
  * One sound the home-screen widget can play.
  * [asset] is a Flutter asset key (built-in sounds); [path] is a file on disk
- * (the user's own clips). Trim points are in milliseconds.
+ * (the user's own clips). Trim points are in milliseconds. [color] is the
+ * sound's category (or custom clip) colour as opaque ARGB; payloads synced
+ * before it existed fall back to the widget accent.
  */
 data class QuickSound(
     val id: String,
@@ -22,6 +25,7 @@ data class QuickSound(
     val path: String?,
     val startMs: Int,
     val endMs: Int,
+    val color: Int = QuickSoundArt.ACCENT,
 )
 
 /**
@@ -53,11 +57,20 @@ object QuickSoundStore {
                     path = o.optString("path").ifEmpty { null },
                     startMs = o.optInt("startMs", 0),
                     endMs = o.optInt("endMs", 0),
+                    color = parseColor(o),
                 )
             }
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    /** `color` is an ARGB number from Dart; absent or invalid → the accent. */
+    private fun parseColor(o: JSONObject): Int {
+        if (!o.has("color") || o.isNull("color")) return QuickSoundArt.ACCENT
+        val argb = o.optLong("color", -1L)
+        if (argb < 0L || argb > 0xFFFFFFFFL) return QuickSoundArt.ACCENT
+        return (argb or 0xFF000000L).toInt()
     }
 }
 
@@ -70,17 +83,30 @@ object QuickSoundPlayer {
     private val handler = Handler(Looper.getMainLooper())
     private var current: Session? = null
 
-    private class Session(val player: MediaPlayer, val onDone: () -> Unit) {
+    private class Session(
+        val soundId: String,
+        val player: MediaPlayer,
+        val onDone: () -> Unit,
+    ) {
         var finished = false
         var stopTask: Runnable? = null
     }
 
-    /** Plays [sound]; [onDone] runs exactly once when it ends, fails or is replaced. */
+    /** Id of the sound playing right now (in this process), or null. */
+    val playingId: String?
+        get() = current?.soundId
+
+    /**
+     * Plays [sound]; [onDone] runs exactly once when it ends, fails, is
+     * stopped or is replaced. [playingId] already names the new sound when a
+     * replaced sound's [onDone] runs, so listeners never see a gap.
+     */
     fun play(context: Context, sound: QuickSound, onDone: () -> Unit = {}) {
-        current?.let { finish(it) }
+        val previous = current
         val player = MediaPlayer()
-        val session = Session(player, onDone)
+        val session = Session(sound.id, player, onDone)
         current = session
+        previous?.let { finish(it) }
         try {
             player.setAudioAttributes(
                 AudioAttributes.Builder()
@@ -111,6 +137,11 @@ object QuickSoundPlayer {
         } catch (e: Exception) {
             finish(session)
         }
+    }
+
+    /** Stops whatever the widget is playing (its onDone still runs). */
+    fun stop() {
+        current?.let { finish(it) }
     }
 
     private fun setAssetSource(context: Context, player: MediaPlayer, asset: String) {

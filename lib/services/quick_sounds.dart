@@ -115,18 +115,7 @@ class QuickSounds {
       mode: choice.mode,
       customIds: choice.ids,
     );
-    final json = jsonEncode([
-      for (final s in sounds)
-        {
-          'id': s.id,
-          'name': s.name,
-          'emoji': s.emoji,
-          'asset': s.isUserClip ? '' : 'assets/sounds/raw/${s.file}',
-          'path': s.isUserClip ? (s.filePath ?? '') : '',
-          'startMs': _trimmed(s) ? (s.trimStart * 1000).round() : 0,
-          'endMs': _trimmed(s) ? (s.trimEnd * 1000).round() : 0,
-        },
-    ]);
+    final json = jsonEncode([for (final s in sounds) payload(s)]);
     try {
       await _channel.invokeMethod('syncQuickSounds', {'json': json});
     } catch (_) {/* the widget is a bonus — never break the app */}
@@ -143,6 +132,46 @@ class QuickSounds {
       );
     } catch (_) {}
   }
+
+  /// One widget entry as the native side reads it (QuickSoundStore.load).
+  /// `color` is omitted when the sound has none, so the widget uses its
+  /// accent — the same as payloads stored before colours were synced.
+  static Map<String, Object> payload(SoundModel s) {
+    return {
+      'id': s.id,
+      'name': s.name,
+      'emoji': s.emoji,
+      'asset': s.isUserClip ? '' : 'assets/sounds/raw/${s.file}',
+      'path': s.isUserClip ? (s.filePath ?? '') : '',
+      'startMs': _trimmed(s) ? (s.trimStart * 1000).round() : 0,
+      'endMs': _trimmed(s) ? (s.trimEnd * 1000).round() : 0,
+      'color': ?widgetColor(s),
+    };
+  }
+
+  /// The colour of a sound's waveform on the widget, as opaque ARGB: a
+  /// clip's own colour, else its category colour (as on the soundboard's
+  /// buttons). Null — My Clips without a colour, unknown categories — means
+  /// the widget's accent.
+  static int? widgetColor(SoundModel s) {
+    final custom = s.customColor;
+    if (custom != null) return (custom | 0xFF000000) & 0xFFFFFFFF;
+    return _categoryColors[s.category];
+  }
+
+  /// Mirrors the category accents in widgets/sound_button.dart.
+  static const _categoryColors = {
+    'Instruments': 0xFFFAC775,
+    'Memes': 0xFFFF7272,
+    'Reactions': 0xFF64C8FF,
+    'Effects': 0xFF5DCAA5,
+    'UI': 0xFF9F8FF0,
+    'Music': 0xFFFF9FF0,
+    'Animals': 0xFF7DDB86,
+    'Gaming': 0xFF7B73FF,
+    'Anime': 0xFFFF9F7F,
+    'Cartoons': 0xFFFFD166,
+  };
 
   static bool _trimmed(SoundModel s) => s.isUserClip && s.trimEnd > s.trimStart;
 

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rounded square stop icon for the widget header. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="12dp"
+    android:height="12dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFF4F1FF"
+        android:pathData="M8,5h8a3,3 0,0 1,3,3v8a3,3 0,0 1,-3,3h-8a3,3 0,0 1,-3,-3v-8a3,3 0,0 1,3,-3z" />
+</vector>

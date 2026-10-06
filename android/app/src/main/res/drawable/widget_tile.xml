@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One sound button inside the widget, brighter while pressed. -->
+<!-- One sound button: white 7% with a faint accent edge; accent while pressed. -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
-            <solid android:color="#667C3AED" />
-            <stroke android:width="1dp" android:color="#CCA78BFA" />
-            <corners android:radius="16dp" />
+            <solid android:color="#33B7A4FF" />
+            <stroke android:width="1.5dp" android:color="#FFB7A4FF" />
+            <corners android:radius="18dp" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#26FFFFFF" />
-            <stroke android:width="1dp" android:color="#40A78BFA" />
-            <corners android:radius="16dp" />
+            <solid android:color="#12FFFFFF" />
+            <stroke android:width="1dp" android:color="#2EB7A4FF" />
+            <corners android:radius="18dp" />
         </shape>
     </item>
 </selector>

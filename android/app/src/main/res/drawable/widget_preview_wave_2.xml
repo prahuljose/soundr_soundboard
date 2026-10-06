@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Picker-preview waveform for slot 2 (s25); generated to match
+     QuickSoundArt.wave() so the preview looks like the live widget. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="33dp"
+    android:height="22dp"
+    android:viewportWidth="33"
+    android:viewportHeight="22">
+    <path
+        android:fillColor="#FFFF7272"
+        android:pathData="M1.5,7.5a1.5,1.5 0,0 1,1.5,1.5v4a1.5,1.5 0,0 1,-3,0v-4a1.5,1.5 0,0 1,1.5,-1.5zM6.5,6.5a1.5,1.5 0,0 1,1.5,1.5v6a1.5,1.5 0,0 1,-3,0v-6a1.5,1.5 0,0 1,1.5,-1.5zM11.5,3.5a1.5,1.5 0,0 1,1.5,1.5v12a1.5,1.5 0,0 1,-3,0v-12a1.5,1.5 0,0 1,1.5,-1.5zM16.5,0.5a1.5,1.5 0,0 1,1.5,1.5v18a1.5,1.5 0,0 1,-3,0v-18a1.5,1.5 0,0 1,1.5,-1.5zM21.5,3a1.5,1.5 0,0 1,1.5,1.5v13a1.5,1.5 0,0 1,-3,0v-13a1.5,1.5 0,0 1,1.5,-1.5zM26.5,4a1.5,1.5 0,0 1,1.5,1.5v11a1.5,1.5 0,0 1,-3,0v-11a1.5,1.5 0,0 1,1.5,-1.5zM31.5,7.5a1.5,1.5 0,0 1,1.5,1.5v4a1.5,1.5 0,0 1,-3,0v-4a1.5,1.5 0,0 1,1.5,-1.5z" />
+</vector>

@@ -1,10 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Widget card: the brand's deep violet, matching the README hero. -->
+<!-- Widget card: deep violet surface (artboard 15). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <gradient
-        android:angle="315"
-        android:endColor="#FF0D0820"
-        android:startColor="#FF221248" />
-    <corners android:radius="24dp" />
+    <solid android:color="#FF140C2B" />
+    <corners android:radius="26dp" />
 </shape>
