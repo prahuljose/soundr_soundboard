@@ -1939,28 +1939,24 @@ class _SoundboardScreenState extends State<SoundboardScreen>
   Widget _buildToolsHub() {
     final accent = Theme.of(context).colorScheme.primary;
     return ToolsHub(
-      zen: HubItem(
-        icon: Icons.self_improvement_rounded,
-        color: const Color(0xFF5DCAA5),
-        title: 'Zen Mode',
-        subtitle: 'Mix rain, waves, fire and more into your own calm soundscape',
-        onOpen: () => _open(const ZenScreen()),
-      ),
+      onOpenZen: (resume) => _open(ZenScreen(resumeLastMix: resume)),
       morse: [
         HubItem(
           icon: Icons.radio_rounded,
+          glyph: '·−·',
           color: accent,
-          title: 'Morse Tapper',
-          subtitle: 'Tap it out and watch it decode',
+          title: 'Tapper',
+          subtitle: 'Tap it out, watch it decode',
           onOpen: () => _open(MorseScreen(
             dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
           )),
         ),
         HubItem(
           icon: Icons.rss_feed_rounded,
+          glyph: '−−·',
           color: accent,
-          title: 'Morse Soundr',
-          subtitle: 'Type a message — hear it or flash it',
+          title: 'Soundr',
+          subtitle: 'Type it, hear it, flash it',
           onOpen: () => _open(MorseSoundrScreen(
             dotSource: _preloaded['s148'], dashSource: _preloaded['s149'],
           )),
@@ -1970,7 +1966,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         HubItem(
           icon: Icons.graphic_eq_rounded,
           color: const Color(0xFFFF9F50),
-          title: 'Decibel Meter',
+          title: 'Decibel meter',
           subtitle: 'How loud is it right now?',
           onOpen: () => _open(const DecibelScreen()),
         ),
@@ -1984,21 +1980,21 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         HubItem(
           icon: Icons.equalizer_rounded,
           color: const Color(0xFFFF9FF0),
-          title: 'Spectrum',
+          title: 'Spectrum analyser',
           subtitle: 'See every frequency, live',
           onOpen: () => _open(const SpectrumScreen()),
         ),
         HubItem(
           icon: Icons.mic_outlined,
           color: const Color(0xFF64C8FF),
-          title: 'Voice Memo',
+          title: 'Voice memo',
           subtitle: 'Quick recordings, kept on your phone',
           onOpen: () => _open(const VoiceMemoScreen()),
         ),
         HubItem(
           icon: Icons.hearing_rounded,
           color: const Color(0xFF9F8FF0),
-          title: 'Hearing Check',
+          title: 'Hearing check',
           subtitle: 'Find your hearing age',
           onOpen: () => _open(const HearingCheckScreen()),
         ),

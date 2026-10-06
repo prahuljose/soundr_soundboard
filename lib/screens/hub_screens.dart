@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/personal_bests.dart';
+import '../services/zen_last_mix.dart';
 import '../theme/app_colors.dart';
 
 /// One destination card on the Tools / Games tabs.
@@ -9,6 +10,9 @@ class HubItem {
   final Color color;
   final String title;
   final String subtitle;
+
+  /// Optional text mark shown instead of [icon] (the Morse cards' call signs).
+  final String? glyph;
 
   /// Opens the screen; completes when the user comes back.
   final Future<void> Function() onOpen;
@@ -19,6 +23,7 @@ class HubItem {
     required this.title,
     required this.subtitle,
     required this.onOpen,
+    this.glyph,
   });
 }
 
@@ -70,29 +75,462 @@ class SoundrNavBar extends StatelessWidget {
 
 // ── Tools tab ────────────────────────────────────────────────────────────────
 
-class ToolsHub extends StatelessWidget {
-  final HubItem zen;
+/// Zen Mode hero, the two Morse tools and a list of audio tools.
+class ToolsHub extends StatefulWidget {
+  /// Opens Zen Mode; [resume] restarts the last mix. Completes on return.
+  final Future<void> Function(bool resume) onOpenZen;
+
+  /// Morse tools — shown as cards with their [HubItem.glyph].
   final List<HubItem> morse;
   final List<HubItem> tools;
 
+  /// Loads the last Zen mix; defaults to [ZenLastMix.load]. Tests override it.
+  final Future<ZenLastMix?> Function()? lastMixLoader;
+
   const ToolsHub({
     super.key,
-    required this.zen,
+    required this.onOpenZen,
     required this.morse,
     required this.tools,
+    this.lastMixLoader,
   });
 
   @override
+  State<ToolsHub> createState() => _ToolsHubState();
+}
+
+class _ToolsHubState extends State<ToolsHub> {
+  ZenLastMix? _lastMix;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLastMix();
+  }
+
+  Future<void> _loadLastMix() async {
+    final mix = await (widget.lastMixLoader ?? ZenLastMix.load)();
+    if (!mounted) return;
+    setState(() => _lastMix = mix);
+  }
+
+  /// Runs [open], then refreshes the Zen card — any screen could have changed
+  /// the last mix by the time the user comes back.
+  Future<void> _thenReload(Future<void> Function() open) async {
+    await open();
+    await _loadLastMix();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return _HubScaffold(
-      title: 'Tools',
-      children: [
-        _HeroCard(item: zen),
-        const _HubLabel('MORSE CODE'),
-        _TileGrid(items: morse),
-        const _HubLabel('AUDIO TOOLS'),
-        _TileGrid(items: tools),
-      ],
+    final c = Theme.of(context).extension<AppColors>()!;
+    return Scaffold(
+      body: SafeArea(
+        bottom: false,
+        child: LayoutBuilder(builder: (context, box) {
+          // Phones use the full width; tablets / landscape get a centred column.
+          final side = ((box.maxWidth - 600) / 2).clamp(16.0, double.infinity);
+          return ListView(
+            padding: EdgeInsets.fromLTRB(side, 0, side, 24),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 26, 4, 16),
+                child: Text('Tools',
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 30,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.8,
+                      height: 1.15,
+                    )),
+              ),
+              _ZenCard(
+                mix: _lastMix,
+                onOpen: (resume) =>
+                    _thenReload(() => widget.onOpenZen(resume)),
+              ),
+              const _ToolsLabel('MORSE CODE'),
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var i = 0; i < widget.morse.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 10),
+                      Expanded(
+                        child: _MorseCard(
+                          item: widget.morse[i],
+                          onTap: () => _thenReload(widget.morse[i].onOpen),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const _ToolsLabel('AUDIO TOOLS'),
+              _ToolList(
+                items: widget.tools,
+                onTap: (item) => _thenReload(item.onOpen),
+              ),
+            ],
+          );
+        }),
+      ),
+    );
+  }
+}
+
+class _ToolsLabel extends StatelessWidget {
+  final String text;
+  const _ToolsLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 24, 4, 10),
+      child: Text(text,
+          style: TextStyle(
+            color: c.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.4,
+          )),
+    );
+  }
+}
+
+/// Zen Mode's teal palette, deeper in light mode so text and borders keep
+/// their contrast on a pale card.
+class _ZenColors {
+  final Color teal;
+  final Color background;
+  final Color border;
+  final Color subtitle;
+  final Color onPill;
+
+  const _ZenColors({
+    required this.teal,
+    required this.background,
+    required this.border,
+    required this.subtitle,
+    required this.onPill,
+  });
+
+  factory _ZenColors.of(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    if (Theme.of(context).brightness == Brightness.dark) {
+      const teal = Color(0xFF7FE0C2);
+      return _ZenColors(
+        teal: teal,
+        background: Color.alphaBlend(
+            teal.withValues(alpha: 0.09), c.scaffoldBg),
+        border: teal.withValues(alpha: 0.28),
+        subtitle: const Color(0xFFB5D9CF),
+        onPill: const Color(0xFF06221B),
+      );
+    }
+    const teal = Color(0xFF0F7A62);
+    return _ZenColors(
+      teal: teal,
+      background: Color.alphaBlend(
+          const Color(0xFF2FB58F).withValues(alpha: 0.12), c.surfaceCard),
+      border: teal.withValues(alpha: 0.35),
+      subtitle: const Color(0xFF3B6559),
+      onPill: Colors.white,
+    );
+  }
+}
+
+/// Zen Mode hero — resumes the last mix when there is one.
+class _ZenCard extends StatelessWidget {
+  final ZenLastMix? mix;
+  final Future<void> Function(bool resume) onOpen;
+  const _ZenCard({required this.mix, required this.onOpen});
+
+  static String _subtitle(ZenLastMix mix) {
+    final names = [for (final t in mix.tracks) t.name];
+    const shown = 3;
+    if (names.length <= shown) return names.join(' · ');
+    return '${names.take(shown).join(' · ')} +${names.length - shown}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final z = _ZenColors.of(context);
+    final mix = this.mix;
+    final headline = mix == null
+        ? 'Make your own calm'
+        : mix.presetName == null
+            ? 'Resume your mix'
+            : 'Resume ${mix.presetName}';
+    final subtitle =
+        mix == null ? 'Rain, waves, fire and more' : _subtitle(mix);
+    final radius = BorderRadius.circular(24);
+
+    return Material(
+      color: z.background,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(color: z.border),
+      ),
+      child: InkWell(
+        onTap: () => onOpen(false),
+        child: Stack(
+          fit: StackFit.passthrough,
+          children: [
+            Positioned(
+              right: -44,
+              top: -8,
+              width: 190,
+              height: 190,
+              child: IgnorePointer(
+                child: CustomPaint(painter: _RingsPainter(z.teal)),
+              ),
+            ),
+            ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 160),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('ZEN MODE',
+                        style: TextStyle(
+                          color: z.teal,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.4,
+                          height: 1.2,
+                        )),
+                    const SizedBox(height: 6),
+                    Text(headline,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.3,
+                          height: 1.2,
+                        )),
+                    const SizedBox(height: 6),
+                    Text(subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: z.subtitle,
+                          fontSize: 14,
+                          height: 1.25,
+                        )),
+                    const SizedBox(height: 12),
+                    Material(
+                      color: z.teal,
+                      shape: const StadiumBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => onOpen(mix != null),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 16, 0),
+                          child: SizedBox(
+                            height: 40,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  mix == null
+                                      ? Icons.arrow_forward_rounded
+                                      : Icons.play_arrow_rounded,
+                                  color: z.onPill,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(mix == null ? 'Open' : 'Play',
+                                    style: TextStyle(
+                                      color: z.onPill,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                    )),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Concentric rings bleeding off the Zen card's top-right corner.
+class _RingsPainter extends CustomPainter {
+  final Color color;
+  const _RingsPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5
+      ..color = color.withValues(alpha: 0.35);
+    final centre = size.center(Offset.zero);
+    final scale = size.shortestSide / 190;
+    for (final r in const [30.0, 52.0, 74.0, 94.0]) {
+      canvas.drawCircle(centre, r * scale, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RingsPainter old) => old.color != color;
+}
+
+/// Morse tool card: the tool's call sign in Morse, then its name.
+class _MorseCard extends StatelessWidget {
+  final HubItem item;
+  final VoidCallback onTap;
+  const _MorseCard({required this.item, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final radius = BorderRadius.circular(20);
+    return Material(
+      color: c.surfaceCard,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(color: c.borderSubtle),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 100),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (item.glyph != null)
+                  Text(item.glyph!,
+                      style: TextStyle(
+                        color: item.color,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 4,
+                        height: 1.1,
+                      ))
+                else
+                  Icon(item.icon, color: item.color, size: 22),
+                // Title sits at a fixed spot so both cards line up even when
+                // one subtitle wraps.
+                const SizedBox(height: 16),
+                Text(item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                    )),
+                const SizedBox(height: 3),
+                Text(item.subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 12.5,
+                      height: 1.25,
+                    )),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One grouped card of tool rows with dividers between them.
+class _ToolList extends StatelessWidget {
+  final List<HubItem> items;
+  final void Function(HubItem item) onTap;
+  const _ToolList({required this.items, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final light = Theme.of(context).brightness == Brightness.light;
+    return Material(
+      color: c.surfaceCard,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: c.borderSubtle),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) Divider(height: 1, thickness: 1, color: c.borderSubtle),
+            InkWell(
+              onTap: () => onTap(items[i]),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 58),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 8, 10, 8),
+                  child: Row(children: [
+                    _IconBadge(
+                      icon: items[i].icon,
+                      // Pastel tool colours wash out on white; deepen them.
+                      color: light
+                          ? Color.lerp(items[i].color, Colors.black, 0.22)!
+                          : items[i].color,
+                      size: 38,
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(items[i].title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: c.textPrimary,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                height: 1.25,
+                              )),
+                          Text(items[i].subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: c.textSecondary,
+                                fontSize: 12.5,
+                                height: 1.3,
+                              )),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(Icons.chevron_right_rounded,
+                        color: c.iconSecondary, size: 22),
+                  ]),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -241,61 +679,6 @@ class _IconBadge extends StatelessWidget {
         borderRadius: BorderRadius.circular(size * 0.3),
       ),
       child: Icon(icon, color: color, size: size * 0.55),
-    );
-  }
-}
-
-/// Big feature card — Zen Mode gets top billing on the Tools tab.
-class _HeroCard extends StatelessWidget {
-  final HubItem item;
-  const _HeroCard({required this.item});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = Theme.of(context).extension<AppColors>()!;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(22),
-        onTap: item.onOpen,
-        child: Ink(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                item.color.withValues(alpha: 0.28),
-                item.color.withValues(alpha: 0.06),
-              ],
-            ),
-            border: Border.all(color: item.color.withValues(alpha: 0.35)),
-          ),
-          child: Row(children: [
-            _IconBadge(icon: item.icon, color: item.color, size: 56),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(item.title,
-                      style: TextStyle(
-                        color: c.textPrimary,
-                        fontSize: 20,
-                        fontWeight: FontWeight.w800,
-                      )),
-                  const SizedBox(height: 4),
-                  Text(item.subtitle,
-                      style: TextStyle(
-                          color: c.textSecondary, fontSize: 13, height: 1.35)),
-                ],
-              ),
-            ),
-            Icon(Icons.chevron_right_rounded, color: c.iconSecondary),
-          ]),
-        ),
-      ),
     );
   }
 }
