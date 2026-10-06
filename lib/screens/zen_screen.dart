@@ -9,7 +9,10 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../services/clip_repository.dart';
+import '../services/zen_last_mix.dart';
 import '../theme/app_colors.dart';
+import '../widgets/zen_widgets.dart';
 
 // ── Zen notification globals ─────────────────────────────────────────────────
 final _zenNotifPlugin = FlutterLocalNotificationsPlugin();
@@ -91,8 +94,52 @@ class _ZenStats {
       };
 }
 
+/// Pre-fills the screen so goldens can show a playing mix without SoLoud,
+/// notifications or storage. Never used by the app itself.
+@visibleForTesting
+class ZenDebugSeed {
+  /// Track id → volume (1–100) of the sounds that are "playing".
+  final Map<String, double> playing;
+  final bool paused;
+
+  /// Length of a running sleep timer, and how much of it is left.
+  final int? sleepMinutes;
+  final Duration? sleepRemaining;
+
+  /// Saved mixes, name → (track id → volume), in chip order.
+  final Map<String, Map<String, double>> presets;
+  final String? selectedPreset;
+  final Set<String> favourites;
+  final Set<String> loading;
+
+  /// Show the preloading screen instead of the grid.
+  final bool probing;
+
+  const ZenDebugSeed({
+    this.playing = const {},
+    this.paused = false,
+    this.sleepMinutes,
+    this.sleepRemaining,
+    this.presets = const {},
+    this.selectedPreset,
+    this.favourites = const {},
+    this.loading = const {},
+    this.probing = false,
+  });
+}
+
 class ZenScreen extends StatefulWidget {
-  const ZenScreen({super.key});
+  /// Start playing the last mix (see [ZenLastMix]) as soon as it loads.
+  final bool resumeLastMix;
+
+  @visibleForTesting
+  final ZenDebugSeed? debugSeed;
+
+  const ZenScreen({
+    super.key,
+    this.resumeLastMix = false,
+    @visibleForTesting this.debugSeed,
+  });
 
   @override
   State<ZenScreen> createState() => _ZenScreenState();
@@ -132,6 +179,8 @@ class _ZenScreenState extends State<ZenScreen> {
   final Map<String, SoundHandle> _handles = {};
   // Handles currently fading out (stop pending)
   final Map<String, SoundHandle> _fadingOut = {};
+  // Timers that finish those fade-outs; cancelled on dispose
+  final Set<Timer> _pendingStops = {};
   // Which tracks are in a loading state
   final Set<String> _loading = {};
   // Which tracks are available (file found in assets)
@@ -144,42 +193,158 @@ class _ZenScreenState extends State<ZenScreen> {
   // Per-track volume: 1–100, default 50 (maps to SoLoud 0.02–2.0, 50=1.0)
   final Map<String, double> _volumes = {};
 
-  // Saved presets
+  // Saved presets, and the one last started from its chip / saved
   List<_ZenPreset> _presets = [];
+  String? _selectedPresetId;
 
   // Pinned / favourite track IDs
   Set<String> _favourites = {};
 
-  // Usage stats
+  // Every handle is paused (the dock's Pause button)
+  bool _paused = false;
+
+  // Usage stats. A session runs from the first sound starting to the mix
+  // emptying; time spent paused is not counted.
   _ZenStats _stats = _ZenStats();
-  DateTime? _playStart; // non-null while any track is playing
+  bool _sessionActive = false;
+  DateTime? _segmentStart; // non-null while the session is audibly playing
+  int _sessionSecs = 0;    // played seconds banked before the current segment
 
   // Fires every minute to refresh the elapsed-time in the notification
   Timer? _notifTimer;
+
+  // ── Sleep timer ──
+  static const _sleepChoices = [15, 30, 45, 60, 90, 120];
+  static const _sleepFadeTime = Duration(seconds: 60);
+  DateTime? _sleepEnd;
+  Duration _sleepTotal = Duration.zero;
+  Timer? _sleepTimer;
+  bool _sleepFading = false;     // the last-minute fade is under way
+  bool _sleepFadeEnabled = true; // "Fade out gently" (persisted)
+  int _sleepMinutes = 30;        // last chosen length (persisted)
+  final ValueNotifier<Duration?> _sleepLeft = ValueNotifier(null);
+
+  // Bumped on every setState so open sheets rebuild along with the screen.
+  final ValueNotifier<int> _rev = ValueNotifier(0);
+
+  Timer? _lastMixTimer;
+  int _fakeHandleId = 1;
+  // What the dock shows; kept while it slides away after the mix empties.
+  List<_ZenTrack> _dockTracks = const [];
+
+  bool get _audio => widget.debugSeed == null;
+
+  List<_ZenTrack> get _playingTracks =>
+      _tracks.where((t) => _handles.containsKey(t.id)).toList();
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _rev.value++;
+  }
 
   @override
   void initState() {
     super.initState();
     _instance = this;
-    _probeAssets();
-    _loadPresets();
+    final seed = widget.debugSeed;
+    if (seed != null) {
+      _applySeed(seed);
+    } else {
+      _init();
+    }
+  }
+
+  Future<void> _init() async {
+    final presets = _loadPresets();
     _loadFavourites();
     _loadStats();
-    _initNotifications();
+    _loadSleepPrefs();
+    _initNotifications().catchError((_) {});
+    await _probeAssets();
+    await presets;
+    if (widget.resumeLastMix && mounted) await _resumeLastMix();
+  }
+
+  void _applySeed(ZenDebugSeed s) {
+    _isProbing = s.probing;
+    _probeCount = s.probing ? 7 : _tracks.length;
+    _available.addAll(_tracks.map((t) => t.id));
+    _favourites = {...s.favourites};
+    var i = 0;
+    for (final e in s.presets.entries) {
+      final p = _ZenPreset(id: 'seed${i++}', name: e.key, volumes: Map.of(e.value));
+      _presets.add(p);
+      if (e.key == s.selectedPreset) _selectedPresetId = p.id;
+    }
+    for (final e in s.playing.entries) {
+      _volumes[e.key] = e.value;
+      _handles[e.key] = SoundHandle(_fakeHandleId++);
+    }
+    _loading.addAll(s.loading);
+    _paused = s.paused && _handles.isNotEmpty;
+    if (_handles.isNotEmpty) {
+      _sessionActive = true;
+      _segmentStart = _paused ? null : DateTime.now();
+    }
+    final mins = s.sleepMinutes;
+    if (mins != null) {
+      _sleepMinutes = mins;
+      _sleepTotal = Duration(minutes: mins);
+      final left = s.sleepRemaining ?? _sleepTotal;
+      _sleepEnd = DateTime.now().add(left);
+      _sleepLeft.value = left;
+    }
   }
 
   @override
   void dispose() {
     if (_instance == this) _instance = null;
     _notifTimer?.cancel();
+    _lastMixTimer?.cancel();
+    for (final t in _pendingStops) {
+      t.cancel();
+    }
+    _pendingStops.clear();
+    // Remember the mix for the Tools tab before tearing it down
+    if (_audio && _handles.isNotEmpty) ZenLastMix.save(_currentMix());
     // Record any in-progress session before tearing down
     _recordElapsed();
     _stopAll(notify: false);
-    _cancelNotification();
+    if (_audio) _cancelNotification();
     for (final src in _sources.values) {
-      try { SoLoud.instance.disposeSource(src); } catch (_) {}
+      try { SoLoud.instance.disposeSource(src).ignore(); } catch (_) {}
     }
+    _sleepLeft.dispose();
+    _rev.dispose();
     super.dispose();
+  }
+
+  // ── SoLoud wrappers (no-ops when rendering a debug seed) ─────────────────
+
+  Future<SoundHandle> _slPlay(String id) async {
+    if (!_audio) return SoundHandle(_fakeHandleId++);
+    return SoLoud.instance.play(_sources[id]!, looping: true, volume: 0.0);
+  }
+
+  void _slFade(SoundHandle h, double to, Duration time) {
+    if (!_audio) return;
+    try { SoLoud.instance.fadeVolume(h, to, time); } catch (_) {}
+  }
+
+  void _slSetVolume(SoundHandle h, double volume) {
+    if (!_audio) return;
+    try { SoLoud.instance.setVolume(h, volume); } catch (_) {}
+  }
+
+  void _slPause(SoundHandle h, bool pause) {
+    if (!_audio) return;
+    try { SoLoud.instance.setPause(h, pause); } catch (_) {}
+  }
+
+  void _slStop(SoundHandle h) {
+    if (!_audio) return;
+    try { SoLoud.instance.stop(h).ignore(); } catch (_) {}
   }
 
   // ── Notifications ────────────────────────────────────────────────────────
@@ -222,19 +387,38 @@ class _ZenScreenState extends State<ZenScreen> {
     return m == 0 ? '${h}h' : '${h}h ${m}m';
   }
 
+  /// Wall-clock time in the user's 12/24-hour preference.
+  String _fmtTimeOfDay(DateTime t) {
+    if (mounted) {
+      return MaterialLocalizations.of(context).formatTimeOfDay(
+        TimeOfDay.fromDateTime(t),
+        alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+      );
+    }
+    return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+  }
+
+  Duration get _sessionElapsed {
+    var d = Duration(seconds: _sessionSecs);
+    final start = _segmentStart;
+    if (start != null) d += DateTime.now().difference(start);
+    return d;
+  }
+
   /// Post (or refresh) the ongoing notification listing what's playing.
   Future<void> _showOrUpdateNotification() async {
-    if (!_notifsReady) return;
-    final playing = _tracks.where((t) => _handles.containsKey(t.id)).toList();
+    if (!_audio || !_notifsReady) return;
+    final playing = _playingTracks;
     if (playing.isEmpty) return;
     final names = playing.map((t) => '${t.emoji} ${t.name}').join('  ·  ');
-    // Second line: "X min in Zen Mode" — only shown once a minute has elapsed
-    final elapsedStr = _playStart != null
-        ? _fmtElapsed(DateTime.now().difference(_playStart!))
-        : '';
-    final body = elapsedStr.isEmpty
-        ? names
-        : '$names\n$elapsedStr in Zen Mode';
+    // Second line: paused / "X min in Zen Mode" (after a minute) / sleep timer
+    final extras = <String>[
+      if (_paused) 'Paused',
+      if (_fmtElapsed(_sessionElapsed).isNotEmpty)
+        '${_fmtElapsed(_sessionElapsed)} in Zen Mode',
+      if (_sleepEnd != null) 'Stops at ${_fmtTimeOfDay(_sleepEnd!)}',
+    ];
+    final body = extras.isEmpty ? names : '$names\n${extras.join('  ·  ')}';
     final androidDetails = AndroidNotificationDetails(
       _kZenChannelId, 'Zen Mode',
       channelDescription: 'Ambient sound playback controls',
@@ -267,6 +451,7 @@ class _ZenScreenState extends State<ZenScreen> {
   }
 
   Future<void> _cancelNotification() async {
+    if (!_audio) return;
     try {
       await _zenNotifPlugin.cancel(_kZenNotifId);
     } catch (_) {}
@@ -286,75 +471,87 @@ class _ZenScreenState extends State<ZenScreen> {
           });
         }
       } catch (_) {
-        // File not yet added — tile shows "Coming Soon"
+        // File not yet added — tile shows "Soon"
       }
       if (mounted) setState(() => _probeCount++);
     }
     if (mounted) setState(() => _isProbing = false);
   }
 
+  // ── Playback ─────────────────────────────────────────────────────────────
+
   static const _fadeDuration = Duration(seconds: 1);
 
   Future<void> _toggle(_ZenTrack track) async {
     if (!_available.contains(track.id)) return;
-
     if (_handles.containsKey(track.id)) {
-      // Fade out then stop
-      final handle = _handles[track.id]!;
-      setState(() {
-        _handles.remove(track.id);
-        _fadingOut[track.id] = handle;
-      });
-      _onHandlesUpdated(); // may end session if last track
-      try {
-        SoLoud.instance.fadeVolume(handle, 0.0, _fadeDuration);
-      } catch (_) {}
-      Future.delayed(_fadeDuration, () {
-        if (!mounted) return;
-        try { SoLoud.instance.stop(handle); } catch (_) {}
-        setState(() => _fadingOut.remove(track.id));
-      });
-      return;
+      _stopTrack(track.id);
+    } else {
+      await _startTrack(track.id);
     }
+  }
+
+  /// Fades a playing sound out and drops it from the mix.
+  void _stopTrack(String id) {
+    final handle = _handles[id];
+    if (handle == null) return;
+    final wasPaused = _paused;
+    setState(() {
+      _handles.remove(id);
+      if (!wasPaused) _fadingOut[id] = handle;
+      if (_handles.isEmpty) _paused = false;
+    });
+    if (wasPaused) {
+      _slStop(handle); // nothing audible to fade
+    } else {
+      _slFade(handle, 0.0, _fadeDuration);
+      late final Timer timer;
+      timer = Timer(_fadeDuration, () {
+        _pendingStops.remove(timer);
+        if (!mounted || _fadingOut[id] != handle) return;
+        _slStop(handle);
+        setState(() => _fadingOut.remove(id));
+      });
+      _pendingStops.add(timer);
+    }
+    // Nothing left for a sleep timer to stop
+    if (_handles.isEmpty) _cancelSleep(restore: false);
+    _onHandlesUpdated(); // may end session if last track
+  }
+
+  /// Starts a sound looping, fading in to its stored volume.
+  Future<void> _startTrack(String id) async {
+    if (_handles.containsKey(id) || _loading.contains(id)) return;
+    if (_audio && _sources[id] == null) return;
 
     // If a fade-out is still in progress for this track, cancel it by
     // stopping the old handle immediately so the new play starts clean.
-    if (_fadingOut.containsKey(track.id)) {
-      final old = _fadingOut[track.id]!;
-      try { SoLoud.instance.stop(old); } catch (_) {}
-      _fadingOut.remove(track.id);
-    }
+    final old = _fadingOut.remove(id);
+    if (old != null) _slStop(old);
 
-    // Play looping at volume 0, then fade in to the track's stored volume
-    final source = _sources[track.id];
-    if (source == null) return;
+    // Adding a sound to a paused mix resumes the whole mix
+    if (_paused) _setPaused(false);
 
     // Default volume = 50 on first play
-    _volumes.putIfAbsent(track.id, () => 50.0);
+    _volumes.putIfAbsent(id, () => 50.0);
 
-    setState(() => _loading.add(track.id));
+    setState(() => _loading.add(id));
     try {
-      final handle = await SoLoud.instance.play(
-        source,
-        looping: true,
-        volume: 0.0,
-      );
-      if (mounted) {
-        final targetVol = _volumes[track.id]! / 50.0; // 50 → 1.0, 100 → 2.0
-        try {
-          SoLoud.instance.fadeVolume(handle, targetVol, _fadeDuration);
-        } catch (_) {}
-        setState(() {
-          _handles[track.id] = handle;
-          _loading.remove(track.id);
-        });
-        _onHandlesUpdated(); // may start session if first track
-      } else {
-        // Widget disposed before play completed
-        try { SoLoud.instance.stop(handle); } catch (_) {}
+      final handle = await _slPlay(id);
+      if (!mounted) {
+        _slStop(handle); // Widget disposed before play completed
+        return;
       }
+      _slFade(handle, _volumes[id]! / 50.0, _fadeDuration); // 50 → 1.0, 100 → 2.0
+      if (_paused) _slPause(handle, true);
+      if (_sleepFading) _fadeForSleep(handle);
+      setState(() {
+        _handles[id] = handle;
+        _loading.remove(id);
+      });
+      _onHandlesUpdated(); // may start session if first track
     } catch (_) {
-      if (mounted) setState(() => _loading.remove(track.id));
+      if (mounted) setState(() => _loading.remove(id));
     }
   }
 
@@ -362,9 +559,191 @@ class _ZenScreenState extends State<ZenScreen> {
     setState(() => _volumes[trackId] = value);
     final handle = _handles[trackId];
     if (handle == null) return;
+    _slSetVolume(handle, value / 50.0);
+    // setVolume cancels SoLoud's fader, so keep the sleep fade going
+    if (_sleepFading) _fadeForSleep(handle);
+    _scheduleLastMixSave();
+  }
+
+  /// Pauses or resumes every sound in the mix.
+  void _setPaused(bool paused) {
+    if (_paused == paused || (paused && _handles.isEmpty)) return;
+    for (final h in _handles.values) {
+      _slPause(h, paused);
+    }
+    if (paused) {
+      // A sound mid fade-out would sit paused forever; finish it now.
+      for (final h in _fadingOut.values) {
+        _slStop(h);
+      }
+      _fadingOut.clear();
+      final start = _segmentStart;
+      if (start != null) {
+        _sessionSecs += DateTime.now().difference(start).inSeconds;
+        _segmentStart = null;
+      }
+    } else if (_sessionActive) {
+      _segmentStart = DateTime.now();
+    }
+    setState(() => _paused = paused);
+    _showOrUpdateNotification();
+  }
+
+  void _stopAll({bool notify = true, bool keepSleep = false}) {
+    for (final handle in _handles.values) {
+      _slStop(handle);
+    }
+    for (final handle in _fadingOut.values) {
+      _slStop(handle);
+    }
+    if (!keepSleep) _cancelSleep(restore: false, notify: notify);
+    if (notify && mounted) {
+      setState(() {
+        _handles.clear();
+        _fadingOut.clear();
+        _paused = false;
+      });
+      _onHandlesUpdated(); // ends session if one was active
+    } else {
+      _handles.clear();
+      _fadingOut.clear();
+      _paused = false;
+      // dispose() will call _recordElapsed() before this path
+    }
+  }
+
+  // ── Sleep timer ──────────────────────────────────────────────────────────
+
+  Future<void> _loadSleepPrefs() async {
     try {
-      SoLoud.instance.setVolume(handle, value / 50.0);
+      final fade = await ClipRepository.getString('zen_sleep_fade');
+      final mins = int.tryParse(await ClipRepository.getString('zen_sleep_minutes') ?? '');
+      if (!mounted) return;
+      setState(() {
+        if (fade != null) _sleepFadeEnabled = fade != '0';
+        if (mins != null && _sleepChoices.contains(mins)) _sleepMinutes = mins;
+      });
     } catch (_) {}
+  }
+
+  void _persistSleepPrefs() {
+    if (!_audio) return;
+    ClipRepository.setString('zen_sleep_fade', _sleepFadeEnabled ? '1' : '0')
+        .catchError((_) {});
+    ClipRepository.setString('zen_sleep_minutes', '$_sleepMinutes')
+        .catchError((_) {});
+  }
+
+  void _startSleep(int minutes) {
+    if (_handles.isEmpty) return; // nothing to put to sleep
+    _cancelSleep(notify: false); // restores volumes if a fade had begun
+    _sleepMinutes = minutes;
+    _persistSleepPrefs();
+    _sleepTotal = Duration(minutes: minutes);
+    _sleepEnd = DateTime.now().add(_sleepTotal);
+    _sleepLeft.value = _sleepTotal;
+    _sleepTimer = Timer.periodic(const Duration(seconds: 1), (_) => _sleepTick());
+    setState(() {});
+    _showOrUpdateNotification();
+  }
+
+  void _cancelSleep({bool restore = true, bool notify = true}) {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    if (_sleepFading && restore) {
+      for (final e in _handles.entries) {
+        _slFade(e.value, (_volumes[e.key] ?? 50) / 50.0, _fadeDuration);
+      }
+    }
+    _sleepFading = false;
+    if (_sleepEnd == null) return;
+    _sleepEnd = null;
+    _sleepLeft.value = null;
+    if (notify && mounted) {
+      setState(() {});
+      _showOrUpdateNotification();
+    }
+  }
+
+  void _sleepTick() {
+    final end = _sleepEnd;
+    if (end == null) return;
+    final left = end.difference(DateTime.now());
+    if (left <= Duration.zero) {
+      _stopAll(); // also cancels the timer
+      return;
+    }
+    // Round up so a fresh 30 min timer reads 30:00, not 29:59
+    _sleepLeft.value = Duration(seconds: (left.inMilliseconds / 1000).ceil());
+    if (_sleepFadeEnabled && !_sleepFading && left <= _sleepFadeTime) {
+      _sleepFading = true;
+      for (final h in _handles.values) {
+        _slFade(h, 0.0, left);
+      }
+    }
+  }
+
+  /// Points [h] at silence by the time the sleep timer ends.
+  void _fadeForSleep(SoundHandle h) {
+    final end = _sleepEnd;
+    if (end == null) return;
+    var left = end.difference(DateTime.now());
+    if (left < _fadeDuration) left = _fadeDuration;
+    _slFade(h, 0.0, left);
+  }
+
+  void _setSleepFade(bool enabled) {
+    if (!enabled && _sleepFading) {
+      for (final e in _handles.entries) {
+        _slFade(e.value, (_volumes[e.key] ?? 50) / 50.0, _fadeDuration);
+      }
+      _sleepFading = false;
+    }
+    setState(() => _sleepFadeEnabled = enabled);
+    _persistSleepPrefs();
+  }
+
+  // ── Last mix (offered by the Tools tab) ─────────────────────────────────
+
+  ZenLastMix _currentMix() => ZenLastMix(
+        presetName: _currentPreset?.name,
+        tracks: [
+          for (final t in _playingTracks)
+            ZenMixTrack(
+              id: t.id,
+              name: t.name,
+              emoji: t.emoji,
+              volume: _volumes[t.id] ?? 50.0,
+            ),
+        ],
+      );
+
+  void _scheduleLastMixSave() {
+    if (!_audio) return;
+    _lastMixTimer?.cancel();
+    _lastMixTimer = Timer(const Duration(milliseconds: 800), () {
+      if (mounted) ZenLastMix.save(_currentMix());
+    });
+  }
+
+  Future<void> _resumeLastMix() async {
+    final mix = await ZenLastMix.load();
+    if (mix == null || !mounted || _handles.isNotEmpty) return;
+    final ids = [
+      for (final t in mix.tracks)
+        if (_available.contains(t.id)) t.id,
+    ];
+    if (ids.isEmpty) return;
+    for (final t in mix.tracks) {
+      _volumes[t.id] = t.volume.clamp(1.0, 100.0);
+    }
+    final name = mix.presetName;
+    if (name != null) {
+      for (final p in _presets) {
+        if (p.name == name) _selectedPresetId = p.id;
+      }
+    }
+    await Future.wait(ids.map(_startTrack));
   }
 
   // ── Favourites persistence ───────────────────────────────────────────────
@@ -387,6 +766,7 @@ class _ZenScreenState extends State<ZenScreen> {
   }
 
   Future<void> _persistFavourites() async {
+    if (!_audio) return;
     try {
       final file = await _favouritesFile();
       await file.writeAsString(jsonEncode(_favourites.toList()));
@@ -426,6 +806,7 @@ class _ZenScreenState extends State<ZenScreen> {
   }
 
   Future<void> _persistPresets() async {
+    if (!_audio) return;
     try {
       final file = await _presetsFile();
       await file.writeAsString(jsonEncode(_presets.map((p) => p.toJson()).toList()));
@@ -470,12 +851,17 @@ class _ZenScreenState extends State<ZenScreen> {
           s.weeklySeconds = 0;
           s.weekStartIso = monday;
         }
-        if (mounted) setState(() => _stats = s);
+        if (mounted) {
+          // Keep a session that started while the file was loading
+          if (_sessionActive) s.sessionsCount += _stats.sessionsCount;
+          setState(() => _stats = s);
+        }
       }
     } catch (_) {}
   }
 
   Future<void> _persistStats() async {
+    if (!_audio) return;
     try {
       final file = await _statsFile();
       await file.writeAsString(jsonEncode(_stats.toJson()));
@@ -493,12 +879,12 @@ class _ZenScreenState extends State<ZenScreen> {
             style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w700, fontSize: 17)),
         content: Text(
           'Your session history, streak, and totals will be permanently deleted.',
-          style: TextStyle(color: c.textMuted, fontSize: 14),
+          style: TextStyle(color: c.textSecondary, fontSize: 14),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: TextStyle(color: c.textMuted)),
+            child: Text('Cancel', style: TextStyle(color: c.textSecondary)),
           ),
           TextButton(
             onPressed: () {
@@ -507,7 +893,7 @@ class _ZenScreenState extends State<ZenScreen> {
               Navigator.pop(ctx);             // close confirm dialog
               Navigator.pop(sheetContext);    // close info sheet
             },
-            child: Text('Clear', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700)),
+            child: const Text('Clear', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700)),
           ),
         ],
       ),
@@ -517,32 +903,39 @@ class _ZenScreenState extends State<ZenScreen> {
   /// Called whenever _handles changes (track added or removed).
   void _onHandlesUpdated() {
     if (_handles.isNotEmpty) {
-      if (_playStart == null) {
+      if (!_sessionActive) {
         // First track — session starts
-        _playStart = DateTime.now();
+        _sessionActive = true;
+        _sessionSecs = 0;
+        _segmentStart = _paused ? null : DateTime.now();
         _stats.sessionsCount++;
         // Refresh the notification every minute so elapsed time stays current
         _notifTimer?.cancel();
-        _notifTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-          _showOrUpdateNotification();
-        });
+        if (_audio) {
+          _notifTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+            _showOrUpdateNotification();
+          });
+        }
       }
       // Show or refresh the notification with the current track list
       _showOrUpdateNotification();
-    } else if (_handles.isEmpty && _playStart != null) {
+    } else if (_sessionActive) {
       _notifTimer?.cancel();
       _notifTimer = null;
       _recordElapsed();
       _cancelNotification();
       if (mounted) setState(() {}); // refresh any stat display
     }
+    _scheduleLastMixSave();
   }
 
-  /// Flush elapsed time to stats. Safe to call at any time; no-op if not playing.
+  /// Flush played time to stats. Safe to call at any time; no-op if idle.
   void _recordElapsed() {
-    if (_playStart == null) return;
-    final secs = DateTime.now().difference(_playStart!).inSeconds;
-    _playStart = null;
+    if (!_sessionActive) return;
+    final secs = _sessionElapsed.inSeconds;
+    _sessionActive = false;
+    _segmentStart = null;
+    _sessionSecs = 0;
     if (secs < 5) return; // ignore accidental taps
 
     // Weekly reset guard
@@ -569,6 +962,8 @@ class _ZenScreenState extends State<ZenScreen> {
     _persistStats();
   }
 
+  // ── Presets ──────────────────────────────────────────────────────────────
+
   void _saveCurrentAsPreset(String name) {
     final volumes = <String, double>{};
     for (final id in _handles.keys) {
@@ -580,21 +975,25 @@ class _ZenScreenState extends State<ZenScreen> {
       name: name,
       volumes: volumes,
     );
-    setState(() => _presets.add(preset));
+    setState(() {
+      _presets.add(preset);
+      _selectedPresetId = preset.id;
+    });
     _persistPresets();
+    _scheduleLastMixSave();
   }
 
   Future<void> _activatePreset(_ZenPreset preset) async {
-    _stopAll();
-    // Apply preset volumes first so _toggle picks them up during fade-in
+    // Switching mixes keeps a running sleep timer
+    _stopAll(keepSleep: true);
+    _selectedPresetId = preset.id;
+    // Apply preset volumes first so the fade-in picks them up
     for (final e in preset.volumes.entries) {
       _volumes[e.key] = e.value;
     }
     // Start all preset tracks concurrently
     await Future.wait(
-      preset.volumes.keys
-          .where((id) => _available.contains(id))
-          .map((id) => _toggle(_tracks.firstWhere((t) => t.id == id))),
+      preset.volumes.keys.where(_available.contains).map(_startTrack),
     );
   }
 
@@ -608,20 +1007,23 @@ class _ZenScreenState extends State<ZenScreen> {
             style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w700, fontSize: 17)),
         content: Text(
           '"${preset.name}" will be removed.',
-          style: TextStyle(color: c.textMuted, fontSize: 14),
+          style: TextStyle(color: c.textSecondary, fontSize: 14),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: TextStyle(color: c.textMuted)),
+            child: Text('Cancel', style: TextStyle(color: c.textSecondary)),
           ),
           TextButton(
             onPressed: () {
-              setState(() => _presets.removeWhere((p) => p.id == preset.id));
+              setState(() {
+                _presets.removeWhere((p) => p.id == preset.id);
+                if (_selectedPresetId == preset.id) _selectedPresetId = null;
+              });
               _persistPresets();
               Navigator.pop(ctx);
             },
-            child: Text('Delete', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700)),
+            child: const Text('Delete', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700)),
           ),
         ],
       ),
@@ -643,7 +1045,7 @@ class _ZenScreenState extends State<ZenScreen> {
           content: Text(
             'You have $_kMaxPresets saved mixes — the strip gets crowded beyond that. '
             'Long-press any mix chip to delete one, then save your new mix.',
-            style: TextStyle(color: c.textMuted, fontSize: 14, height: 1.5),
+            style: TextStyle(color: c.textSecondary, fontSize: 14, height: 1.5),
           ),
           actions: [
             TextButton(
@@ -656,7 +1058,8 @@ class _ZenScreenState extends State<ZenScreen> {
       return;
     }
 
-    final playing = _tracks.where((t) => _handles.containsKey(t.id)).toList();
+    final playing = _playingTracks;
+    if (playing.isEmpty) return;
     final suggestion = playing.length <= 2
         ? playing.map((t) => t.name).join(' + ')
         : '${playing.first.name} mix';
@@ -706,7 +1109,7 @@ class _ZenScreenState extends State<ZenScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: TextStyle(color: c.textMuted)),
+            child: Text('Cancel', style: TextStyle(color: c.textSecondary)),
           ),
           TextButton(
             onPressed: () {
@@ -724,156 +1127,289 @@ class _ZenScreenState extends State<ZenScreen> {
 
   // Returns true if the currently playing set exactly matches the preset's tracks
   bool _isActivePreset(_ZenPreset preset) {
-    if (_handles.length != preset.volumes.length) return false;
+    if (_handles.isEmpty || _handles.length != preset.volumes.length) return false;
     return _handles.keys.every((id) => preset.volumes.containsKey(id));
   }
 
-  void _stopAll({bool notify = true}) {
-    for (final handle in _handles.values) {
-      try { SoLoud.instance.stop(handle); } catch (_) {}
+  /// The saved mix the current sounds came from: the chip last tapped if the
+  /// playing set still matches it, else any preset with the same sounds.
+  _ZenPreset? get _currentPreset {
+    for (final p in _presets) {
+      if (p.id == _selectedPresetId && _isActivePreset(p)) return p;
     }
-    for (final handle in _fadingOut.values) {
-      try { SoLoud.instance.stop(handle); } catch (_) {}
+    for (final p in _presets) {
+      if (_isActivePreset(p)) return p;
     }
-    if (notify && mounted) {
-      setState(() {
-        _handles.clear();
-        _fadingOut.clear();
-      });
-      _onHandlesUpdated(); // ends session if one was active
-    } else {
-      _handles.clear();
-      _fadingOut.clear();
-      // dispose() will call _recordElapsed() before this path
-    }
+    return null;
   }
 
-  bool get _anyPlaying => _handles.isNotEmpty || _fadingOut.isNotEmpty;
+  // ── Sheets ───────────────────────────────────────────────────────────────
 
-  void _showVolumeSheet(BuildContext context, _ZenTrack track, AppColors c, Color accent) {
-    showModalBottomSheet(
+  Future<void> _showZenSheet(WidgetBuilder builder) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: c.surfaceCard,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setSheetState) {
-          final vol = _volumes[track.id] ?? 50.0;
-          return Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 40),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Handle bar
-                Container(
-                  width: 36, height: 4,
-                  decoration: BoxDecoration(
-                    color: c.border,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                // Track header
-                Row(
+      builder: builder,
+    );
+  }
+
+  void _openMixer() {
+    if (_handles.isEmpty) return;
+    _showZenSheet((_) => _MixerSheet(host: this));
+  }
+
+  void _openSleep() {
+    if (_handles.isEmpty) return;
+    _showZenSheet((_) => _SleepSheet(host: this));
+  }
+
+  void _showVolumeSheet(BuildContext context, _ZenTrack track) {
+    _showZenSheet((ctx) => ValueListenableBuilder<int>(
+          valueListenable: _rev,
+          builder: (ctx, _, _) {
+            final c = Theme.of(ctx).extension<AppColors>()!;
+            final z = ZenPalette.of(ctx);
+            final vol = _volumes[track.id] ?? 50.0;
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 10, 24, 28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(track.emoji, style: const TextStyle(fontSize: 28)),
-                    const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    const _SheetHandle(),
+                    const SizedBox(height: 20),
+                    Row(
                       children: [
-                        Text(
-                          track.name,
-                          style: TextStyle(
-                            color: c.textPrimary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
+                        _EmojiBadge(emoji: track.emoji),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(track.name,
+                                  style: TextStyle(
+                                      color: c.textPrimary,
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w700)),
+                              Text(track.description,
+                                  style: TextStyle(color: c.textSecondary, fontSize: 13)),
+                            ],
                           ),
                         ),
                         Text(
-                          track.description,
-                          style: TextStyle(color: c.textMuted, fontSize: 12),
+                          '${vol.round()}%',
+                          style: TextStyle(
+                            color: z.teal,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
                         ),
                       ],
                     ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: accent.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        vol.round().toString(),
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Icon(Icons.volume_down_rounded, color: c.iconSecondary, size: 20),
+                        Expanded(
+                          child: _ZenSlider(
+                            label: '${track.name} volume',
+                            value: vol,
+                            onChanged: (v) => _setVolume(track.id, v),
+                          ),
                         ),
-                      ),
+                        Icon(Icons.volume_up_rounded, color: c.iconSecondary, size: 20),
+                      ],
                     ),
+                    const SizedBox(height: 4),
+                    Text('Default is 50%',
+                        style: TextStyle(color: c.textSecondary, fontSize: 12)),
                   ],
                 ),
-                const SizedBox(height: 16),
-                // Slider row
-                Row(
-                  children: [
-                    Icon(Icons.volume_down_rounded, color: c.textMuted, size: 20),
-                    Expanded(
-                      child: SliderTheme(
-                        data: SliderTheme.of(context).copyWith(
-                          activeTrackColor: accent,
-                          inactiveTrackColor: accent.withValues(alpha: 0.18),
-                          thumbColor: accent,
-                          overlayColor: accent.withValues(alpha: 0.12),
-                          trackHeight: 3.5,
-                          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-                          overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
-                        ),
-                        child: Slider(
-                          value: vol,
-                          min: 1,
-                          max: 100,
-                          divisions: 99,
-                          onChanged: (v) {
-                            setSheetState(() => _volumes[track.id] = v);
-                            _setVolume(track.id, v);
-                          },
-                        ),
-                      ),
-                    ),
-                    Icon(Icons.volume_up_rounded, color: c.textMuted, size: 20),
-                  ],
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('1', style: TextStyle(color: c.textMuted, fontSize: 11)),
-                    Text('50  (default)', style: TextStyle(color: c.textMuted, fontSize: 11)),
-                    Text('100', style: TextStyle(color: c.textMuted, fontSize: 11)),
-                  ],
-                ),
-              ],
+              ),
+            );
+          },
+        ));
+  }
+
+  void _showInfoSheet(BuildContext context, AppColors c, Color accent) {
+    _showZenSheet((sheetCtx) => _ZenInfoSheet(
+          colors: c,
+          accent: accent,
+          stats: _stats,
+          onClearStats: () => _clearStats(sheetCtx),
+        ));
+  }
+
+  // ── Build ────────────────────────────────────────────────────────────────
+
+  static const _kHint = 'Tap a sound to play it · hold a playing one for volume';
+
+  Widget _buildHeader(AppColors c, Color accent) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Row(
+        children: [
+          ZenHeaderButton(
+            icon: Icons.chevron_left_rounded,
+            tooltip: 'Back',
+            onPressed: () => Navigator.maybePop(context),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Zen Mode',
+              style: TextStyle(
+                color: c.textPrimary,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          );
-        },
+          ),
+          if (!_isProbing)
+            ZenHeaderButton(
+              icon: Icons.info_outline_rounded,
+              tooltip: 'About Zen Mode and your stats',
+              onPressed: () => _showInfoSheet(context, c, accent),
+            ),
+        ],
       ),
     );
   }
 
-  void _showInfoSheet(BuildContext context, AppColors c, Color accent) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: c.surfaceCard,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+  Widget _buildLoading(AppColors c, ZenPalette z) {
+    return Scaffold(
+      backgroundColor: c.scaffoldBg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(c, z.teal),
+            Expanded(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 48),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('🧘', style: TextStyle(fontSize: 72)),
+                      const SizedBox(height: 28),
+                      Text(
+                        'Zen Mode',
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 26,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Loading ambient sounds…',
+                        style: TextStyle(color: c.textSecondary, fontSize: 14),
+                      ),
+                      const SizedBox(height: 32),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: _tracks.isEmpty ? 0 : _probeCount / _tracks.length,
+                          minHeight: 5,
+                          backgroundColor: z.tint(0.14),
+                          valueColor: AlwaysStoppedAnimation(z.teal),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '$_probeCount of ${_tracks.length}',
+                        style: TextStyle(color: c.textSecondary, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-      builder: (sheetCtx) => _ZenInfoSheet(
-        colors: c,
-        accent: accent,
-        stats: _stats,
-        onClearStats: () => _clearStats(sheetCtx),
+    );
+  }
+
+  // Dock height above the bottom inset, for the grid's bottom padding:
+  // 12 + handle 4 + 12 + label 20 + 14 + buttons 60 + 22.
+  static const _kDockHeight = 144.0;
+
+  Widget _buildDock(AppColors c, ZenPalette z, double bottomInset) {
+    final names = _dockTracks.map((t) => '${t.emoji} ${t.name}').join('  ·  ');
+    final label = _paused ? 'Paused  ·  $names' : names;
+    final labelStyle = TextStyle(
+      color: c.textPrimary,
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
+    );
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surfaceCard,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        border: Border(top: BorderSide(color: c.border)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: z.isDark ? 0.35 : 0.06),
+            blurRadius: z.isDark ? 30 : 18,
+            offset: Offset(0, z.isDark ? -12 : -4),
+          ),
+        ],
+      ),
+      padding: EdgeInsets.fromLTRB(16, 0, 16, 22 + bottomInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Handle + now-playing line: tap or swipe up for the mixer
+          Semantics(
+            button: true,
+            label: 'Now playing: $names. Open mixer',
+            excludeSemantics: true,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _openMixer,
+              onVerticalDragEnd: (d) {
+                if ((d.primaryVelocity ?? 0) < -150) _openMixer();
+              },
+              child: Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Column(
+                  children: [
+                    const _SheetHandle(),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      height: 20,
+                      child: Row(
+                        children: [
+                          ZenPulsingDot(animate: !_paused),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: _dockTracks.length > 2
+                                ? _MarqueeText(text: label, style: labelStyle)
+                                : Text(label,
+                                    style: labelStyle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          _TransportRow(host: this, onSleep: _openSleep, onMixer: _openMixer),
+        ],
       ),
     );
   }
@@ -881,255 +1417,858 @@ class _ZenScreenState extends State<ZenScreen> {
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
-    final accent = Theme.of(context).colorScheme.primary;
+    final z = ZenPalette.of(context);
 
     // ── Preload screen ────────────────────────────────────────────────────
-    if (_isProbing) {
-      return Scaffold(
-        backgroundColor: c.scaffoldBg,
-        appBar: AppBar(
-          backgroundColor: c.surfaceCard,
-          foregroundColor: c.textPrimary,
-          elevation: 0,
-          title: Row(
-            children: [
-              const Text('🧘', style: TextStyle(fontSize: 20)),
-              const SizedBox(width: 8),
-              Text('Zen Mode',
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 18,
-                  )),
-            ],
-          ),
-        ),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 48),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('🧘', style: TextStyle(fontSize: 72)),
-                const SizedBox(height: 28),
-                Text(
-                  'Zen Mode',
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Loading ambient sounds…',
-                  style: TextStyle(color: c.textMuted, fontSize: 14),
-                ),
-                const SizedBox(height: 32),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: _tracks.isEmpty ? 0 : _probeCount / _tracks.length,
-                    minHeight: 5,
-                    backgroundColor: accent.withValues(alpha: 0.12),
-                    valueColor: AlwaysStoppedAnimation(accent),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  '$_probeCount of ${_tracks.length}',
-                  style: TextStyle(color: c.textMuted, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+    if (_isProbing) return _buildLoading(c, z);
+
+    final playing = _playingTracks;
+    if (playing.isNotEmpty) _dockTracks = playing;
+    final dockVisible = playing.isNotEmpty;
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final current = _currentPreset;
+    final favourites = _tracks
+        .where((t) => _favourites.contains(t.id) && _available.contains(t.id))
+        .toList();
 
     // ── Main screen ───────────────────────────────────────────────────────
     return Scaffold(
       backgroundColor: c.scaffoldBg,
-      appBar: AppBar(
-        backgroundColor: c.surfaceCard,
-        foregroundColor: c.textPrimary,
-        elevation: 0,
-        title: Row(
-          children: [
-            const Text('🧘', style: TextStyle(fontSize: 20)),
-            const SizedBox(width: 8),
-            Text(
-              'Zen Mode',
-              style: TextStyle(
-                color: c.textPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 18,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          if (_anyPlaying)
-            TextButton.icon(
-              onPressed: _stopAll,
-              icon: Icon(Icons.stop_rounded, size: 18, color: c.textSecondary),
-              label: Text(
-                'Stop all',
-                style: TextStyle(color: c.textSecondary, fontSize: 13),
-              ),
-            ),
-        ],
-      ),
-      body: Column(
+      body: Stack(
         children: [
-          // Header hint row — tap anywhere to open the info sheet
-          GestureDetector(
-            onTap: () => _showInfoSheet(context, c, accent),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-              child: Row(
-                children: [
-                  Icon(Icons.layers_rounded, size: 15, color: c.textMuted),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      'Layer multiple sounds — they loop until stopped.',
-                      style: TextStyle(color: c.textMuted, fontSize: 12),
-                    ),
+          SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                _buildHeader(c, z.teal),
+                Expanded(
+                  child: CustomScrollView(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                          child: Text(
+                            _kHint,
+                            style: TextStyle(color: c.textSecondary, fontSize: 13),
+                          ),
+                        ),
+                      ),
+
+                      // ── Save mix + saved mixes ──────────────────────────
+                      if (_presets.isNotEmpty || playing.isNotEmpty)
+                        SliverToBoxAdapter(
+                          child: _ChipRow(
+                            top: 14,
+                            children: [
+                              if (playing.isNotEmpty)
+                                _ZenChip(
+                                  label: 'Save mix',
+                                  icon: Icons.add_rounded,
+                                  style: _ChipStyle.accent,
+                                  onTap: () => _showSavePresetDialog(context, c, z.teal),
+                                ),
+                              for (final p in _presets)
+                                _ZenChip(
+                                  label: p.name,
+                                  style: identical(p, current)
+                                      ? _ChipStyle.selected
+                                      : _ChipStyle.plain,
+                                  onTap: () => _activatePreset(p),
+                                  onLongPress: () => _deletePreset(p, context, c, z.teal),
+                                ),
+                            ],
+                          ),
+                        ),
+
+                      // ── Pinned sounds ───────────────────────────────────
+                      if (favourites.isNotEmpty)
+                        SliverToBoxAdapter(
+                          child: _ChipRow(
+                            top: 10,
+                            children: [
+                              Semantics(
+                                label: 'Pinned sounds',
+                                child: Padding(
+                                  padding: const EdgeInsets.only(right: 2),
+                                  child: Icon(Icons.star_rounded, size: 18, color: z.teal),
+                                ),
+                              ),
+                              for (final t in favourites)
+                                _ZenChip(
+                                  label: t.name,
+                                  emoji: t.emoji,
+                                  style: _handles.containsKey(t.id)
+                                      ? _ChipStyle.selected
+                                      : _ChipStyle.plain,
+                                  onTap: () => _toggle(t),
+                                ),
+                            ],
+                          ),
+                        ),
+
+                      // ── Grid ────────────────────────────────────────────
+                      SliverPadding(
+                        padding: EdgeInsets.fromLTRB(
+                          16,
+                          16,
+                          16,
+                          (dockVisible ? _kDockHeight + 16 : 24) + bottomInset,
+                        ),
+                        sliver: SliverGrid(
+                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 12,
+                            mainAxisSpacing: 12,
+                            mainAxisExtent: 128,
+                          ),
+                          delegate: SliverChildBuilderDelegate(
+                            childCount: _tracks.length,
+                            (context, i) {
+                              final track = _tracks[i];
+                              final isPlaying = _handles.containsKey(track.id);
+                              return _ZenTile(
+                                track: track,
+                                isAvailable: _available.contains(track.id),
+                                isPlaying: isPlaying,
+                                isPaused: _paused,
+                                isLoading: _loading.contains(track.id),
+                                colors: c,
+                                onTap: () => _toggle(track),
+                                onLongPress: isPlaying
+                                    ? () => _showVolumeSheet(context, track)
+                                    : null,
+                                volume: _volumes[track.id] ?? 50.0,
+                                tileIndex: i,
+                                isFavourited: _favourites.contains(track.id),
+                                onToggleFavourite: () => _toggleFavourite(track.id),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                  Icon(Icons.info_outline_rounded, size: 15, color: c.textMuted),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
 
-          // ── Favourites row ───────────────────────────────────────────────
-          if (_favourites.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 5),
-              child: Row(
-                children: [
-                  Icon(Icons.star_rounded, size: 12, color: accent),
-                  const SizedBox(width: 5),
-                  Text(
-                    'Pinned',
-                    style: TextStyle(
-                      color: c.textMuted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                ],
+          // ── Now-playing dock ──────────────────────────────────────────────
+          if (_dockTracks.isNotEmpty)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                ignoring: !dockVisible,
+                child: AnimatedSlide(
+                  offset: dockVisible ? Offset.zero : const Offset(0, 1.15),
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeOutCubic,
+                  child: _buildDock(c, z, bottomInset),
+                ),
               ),
             ),
-            SizedBox(
-              height: 48,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: _tracks
-                    .where((t) => _favourites.contains(t.id) && _available.contains(t.id))
-                    .map((t) => _FavouriteChip(
-                          track: t,
-                          isPlaying: _handles.containsKey(t.id),
-                          accent: accent,
-                          colors: c,
-                          onTap: () => _toggle(t),
-                        ))
-                    .toList(),
-              ),
-            ),
-            const SizedBox(height: 6),
-          ],
-
-          // ── Presets row ──────────────────────────────────────────────────
-          if (_presets.isNotEmpty || _handles.isNotEmpty)
-            SizedBox(
-              height: 40,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                children: [
-                  if (_handles.isNotEmpty)
-                    _SaveMixChip(
-                      accent: accent,
-                      colors: c,
-                      onTap: () => _showSavePresetDialog(context, c, accent),
-                    ),
-                  ..._presets.map((p) => _PresetChip(
-                        preset: p,
-                        isActive: _isActivePreset(p),
-                        accent: accent,
-                        colors: c,
-                        onTap: () => _activatePreset(p),
-                        onLongPress: () => _deletePreset(p, context, c, accent),
-                      )),
-                ],
-              ),
-            ),
-
-          if (_presets.isNotEmpty || _handles.isNotEmpty)
-            const SizedBox(height: 6),
-
-          // Grid
-          Expanded(
-            child: GridView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 5, 16, 100),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 1.1,
-              ),
-              itemCount: _tracks.length,
-              itemBuilder: (context, i) {
-                final track = _tracks[i];
-                final isAvailable = _available.contains(track.id);
-                final isPlaying = _handles.containsKey(track.id);
-                final isLoading = _loading.contains(track.id);
-
-                return _ZenTile(
-                  track: track,
-                  isAvailable: isAvailable,
-                  isPlaying: isPlaying,
-                  isLoading: isLoading,
-                  accent: accent,
-                  colors: c,
-                  onTap: () => _toggle(track),
-                  onLongPress: isPlaying
-                      ? () => _showVolumeSheet(context, track, c, accent)
-                      : null,
-                  volume: _volumes[track.id] ?? 50.0,
-                  tileIndex: i,
-                  isFavourited: _favourites.contains(track.id),
-                  onToggleFavourite: () => _toggleFavourite(track.id),
-                );
-              },
-            ),
-          ),
         ],
       ),
-
-      // Now playing bar
-      bottomSheet: _anyPlaying ? _NowPlayingBar(
-        handles: _handles,
-        tracks: _tracks,
-        colors: c,
-        accent: accent,
-        onStop: _stopAll,
-      ) : null,
     );
   }
 }
 
+// ---------------------------------------------------------------------------
+// Transport row — Pause/Play · Stop · Sleep pill · (Mixer)
+// ---------------------------------------------------------------------------
+class _TransportRow extends StatelessWidget {
+  final _ZenScreenState host;
+  final VoidCallback onSleep;
+  final VoidCallback? onMixer;
+
+  const _TransportRow({required this.host, required this.onSleep, this.onMixer});
+
+  @override
+  Widget build(BuildContext context) {
+    final paused = host._paused;
+    final hasMix = host._handles.isNotEmpty;
+    return Row(
+      children: [
+        ZenRoundButton(
+          primary: true,
+          size: 60,
+          iconSize: 30,
+          icon: paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          tooltip: paused ? 'Resume all' : 'Pause all',
+          onPressed: hasMix ? () => host._setPaused(!paused) : null,
+        ),
+        const SizedBox(width: 10),
+        ZenRoundButton(
+          icon: Icons.stop_rounded,
+          tooltip: 'Stop all',
+          onPressed: hasMix ? host._stopAll : null,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ValueListenableBuilder<Duration?>(
+            valueListenable: host._sleepLeft,
+            builder: (context, left, _) =>
+                ZenSleepPill(remaining: left, onPressed: onSleep),
+          ),
+        ),
+        if (onMixer != null) ...[
+          const SizedBox(width: 10),
+          ZenRoundButton(
+            icon: Icons.tune_rounded,
+            iconSize: 20,
+            tooltip: 'Open mixer',
+            onPressed: onMixer,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SheetHandle extends StatelessWidget {
+  const _SheetHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    return Center(
+      child: Container(
+        width: 40,
+        height: 4,
+        decoration: BoxDecoration(
+          color: c.handleBar,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+    );
+  }
+}
+
+/// Emoji in a 44px teal-tinted rounded square.
+class _EmojiBadge extends StatelessWidget {
+  final String emoji;
+  const _EmojiBadge({required this.emoji});
+
+  @override
+  Widget build(BuildContext context) {
+    final z = ZenPalette.of(context);
+    return Container(
+      width: 44,
+      height: 44,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: z.tint(0.14),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Text(emoji, style: const TextStyle(fontSize: 24, height: 1)),
+    );
+  }
+}
+
+class _ZenSlider extends StatelessWidget {
+  final String label;
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  const _ZenSlider({required this.label, required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final z = ZenPalette.of(context);
+    return SliderTheme(
+      data: SliderTheme.of(context).copyWith(
+        activeTrackColor: z.teal,
+        inactiveTrackColor: z.tint(0.20),
+        thumbColor: z.teal,
+        overlayColor: z.tint(0.14),
+        trackHeight: 4,
+        thumbShape: const RoundSliderThumbShape(
+            enabledThumbRadius: 8, elevation: 0, pressedElevation: 0),
+        overlayShape: const RoundSliderOverlayShape(overlayRadius: 16),
+        showValueIndicator: ShowValueIndicator.never,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+      child: Semantics(
+        label: label,
+        child: Slider(
+          value: value.clamp(1.0, 100.0),
+          min: 1,
+          max: 100,
+          divisions: 99,
+          semanticFormatterCallback: (v) => '${v.round()}%',
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mixer sheet (5b)
+// ---------------------------------------------------------------------------
+class _MixerSheet extends StatefulWidget {
+  final _ZenScreenState host;
+  const _MixerSheet({required this.host});
+
+  @override
+  State<_MixerSheet> createState() => _MixerSheetState();
+}
+
+class _MixerSheetState extends State<_MixerSheet> {
+  bool _closing = false;
+
+  void _close() {
+    if (_closing) return;
+    _closing = true;
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final host = widget.host;
+    return ValueListenableBuilder<int>(
+      valueListenable: host._rev,
+      builder: (context, _, _) {
+        final c = Theme.of(context).extension<AppColors>()!;
+        final z = ZenPalette.of(context);
+        final playing = host._playingTracks;
+        if (playing.isEmpty && !_closing) {
+          // Everything was stopped (here, from the notification or the timer)
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) _close();
+          });
+        }
+        final mixName = host._currentPreset?.name ?? 'Your mix';
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.88,
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 22),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _SheetHandle(),
+                  const SizedBox(height: 16),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'NOW PLAYING',
+                                style: TextStyle(
+                                  color: c.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.4,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                mixName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: c.textPrimary,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        _ZenChip(
+                          label: 'Save mix',
+                          style: _ChipStyle.accent,
+                          height: 40,
+                          onTap: () =>
+                              host._showSavePresetDialog(context, c, z.teal),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      padding: EdgeInsets.zero,
+                      itemCount: playing.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (context, i) {
+                        final t = playing[i];
+                        return _MixerRow(
+                          key: ValueKey(t.id),
+                          track: t,
+                          volume: host._volumes[t.id] ?? 50.0,
+                          onChanged: (v) => host._setVolume(t.id, v),
+                          onRemove: () => host._stopTrack(t.id),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ZenDashedButton(
+                    label: 'Add a sound from the grid',
+                    onPressed: _close,
+                  ),
+                  const SizedBox(height: 20),
+                  _TransportRow(
+                    host: host,
+                    onSleep: () {
+                      _close();
+                      host._openSleep();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MixerRow extends StatelessWidget {
+  final _ZenTrack track;
+  final double volume;
+  final ValueChanged<double> onChanged;
+  final VoidCallback onRemove;
+
+  const _MixerRow({
+    super.key,
+    required this.track,
+    required this.volume,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final z = ZenPalette.of(context);
+    return Container(
+      height: 66,
+      padding: const EdgeInsets.fromLTRB(10, 0, 4, 0),
+      decoration: BoxDecoration(
+        color: z.activeBg,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: z.tint(0.28)),
+      ),
+      child: Row(
+        children: [
+          _EmojiBadge(emoji: track.emoji),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        track.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${volume.round()}%',
+                      style: TextStyle(
+                        color: z.teal,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                SizedBox(
+                  height: 24,
+                  child: _ZenSlider(
+                    label: '${track.name} volume',
+                    value: volume,
+                    onChanged: onChanged,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Remove ${track.name}',
+            onPressed: onRemove,
+            icon: Icon(Icons.close_rounded, size: 18, color: c.textSecondary),
+            style: IconButton.styleFrom(
+              fixedSize: const Size(44, 44),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sleep timer sheet (5c)
+// ---------------------------------------------------------------------------
+class _SleepSheet extends StatefulWidget {
+  final _ZenScreenState host;
+  const _SleepSheet({required this.host});
+
+  @override
+  State<_SleepSheet> createState() => _SleepSheetState();
+}
+
+class _SleepSheetState extends State<_SleepSheet> {
+  late int _sel = widget.host._sleepEnd != null
+      ? widget.host._sleepTotal.inMinutes
+      : widget.host._sleepMinutes;
+  bool _closing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final host = widget.host;
+    return ListenableBuilder(
+      listenable: Listenable.merge([host._rev, host._sleepLeft]),
+      builder: (context, _) {
+        final c = Theme.of(context).extension<AppColors>()!;
+        final z = ZenPalette.of(context);
+        if (host._handles.isEmpty && !_closing) {
+          // The mix was stopped (timer ran out, notification, …)
+          _closing = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) Navigator.of(context).pop();
+          });
+        }
+        final running = host._sleepEnd != null;
+        final left = host._sleepLeft.value ?? Duration(minutes: _sel);
+        final shown = running ? left : Duration(minutes: _sel);
+        final end = running ? host._sleepEnd! : DateTime.now().add(shown);
+        final progress = running && host._sleepTotal.inSeconds > 0
+            ? left.inSeconds / host._sleepTotal.inSeconds
+            : 1.0;
+        final choice = zenMinutesLabel(_sel);
+
+        Widget choiceRow(List<int> mins) => Row(
+              children: [
+                for (var i = 0; i < mins.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 8),
+                  Expanded(
+                    child: ZenChoiceButton(
+                      label: zenMinutesLabel(mins[i]),
+                      selected: mins[i] == _sel,
+                      onPressed: () => setState(() => _sel = mins[i]),
+                    ),
+                  ),
+                ],
+              ],
+            );
+
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.92,
+          ),
+          child: SafeArea(
+            top: false,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _SheetHandle(),
+                  const SizedBox(height: 18),
+                  Text(
+                    'Sleep timer',
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Your mix fades out and stops on its own.',
+                    style: TextStyle(color: c.textSecondary, fontSize: 14),
+                  ),
+                  const SizedBox(height: 22),
+                  Center(
+                    child: ZenSleepRing(
+                      progress: progress,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.bedtime_outlined, size: 22, color: z.teal),
+                          const SizedBox(height: 4),
+                          Text(
+                            zenClock(shown),
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: shown.inHours > 0 ? 40 : 46,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -1,
+                              height: 1.1,
+                              fontFeatures: const [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                          Text(
+                            'stops at ${host._fmtTimeOfDay(end)}',
+                            style: TextStyle(color: c.textSecondary, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Semantics(
+                    container: true,
+                    label: 'Timer length',
+                    child: Column(
+                      children: [
+                        choiceRow(_ZenScreenState._sleepChoices.sublist(0, 3)),
+                        const SizedBox(height: 8),
+                        choiceRow(_ZenScreenState._sleepChoices.sublist(3)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  MergeSemantics(
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+                      decoration: BoxDecoration(
+                        color: z.buttonBg,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: z.buttonBorder),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Fade out gently',
+                                    style: TextStyle(
+                                        color: c.textPrimary,
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w500)),
+                                Text('Lowers the volume over the last minute',
+                                    style: TextStyle(
+                                        color: c.textSecondary, fontSize: 12.5)),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Switch(
+                            value: host._sleepFadeEnabled,
+                            onChanged: host._setSleepFade,
+                            activeThumbColor: z.onTeal,
+                            activeTrackColor: z.teal,
+                            inactiveThumbColor: c.iconSecondary,
+                            inactiveTrackColor: c.surfaceCard,
+                            trackOutlineColor: WidgetStateProperty.resolveWith(
+                              (s) => s.contains(WidgetState.selected)
+                                  ? Colors.transparent
+                                  : c.border,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            if (running) host._cancelSleep();
+                            Navigator.of(context).pop();
+                          },
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(56),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            foregroundColor: c.textPrimary,
+                            side: BorderSide(color: c.border),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18)),
+                            textStyle: _buttonText(context, FontWeight.w700),
+                          ),
+                          child: Text(running ? 'Turn off' : 'Cancel', maxLines: 1, softWrap: false),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton(
+                          onPressed: () {
+                            host._startSleep(_sel);
+                            Navigator.of(context).pop();
+                          },
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size.fromHeight(56),
+                            backgroundColor: z.teal,
+                            foregroundColor: z.onTeal,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18)),
+                            textStyle: _buttonText(context, FontWeight.w800),
+                          ),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(!running
+                                ? 'Start $choice timer'
+                                : _sel == host._sleepTotal.inMinutes
+                                    ? 'Restart $choice timer'
+                                    : 'Update to $choice'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Button label style that keeps the app font (a bare TextStyle would drop it).
+TextStyle _buttonText(BuildContext context, FontWeight weight) =>
+    (Theme.of(context).textTheme.labelLarge ?? const TextStyle())
+        .copyWith(fontSize: 15, fontWeight: weight);
+
+// ---------------------------------------------------------------------------
+// Chips above the grid
+// ---------------------------------------------------------------------------
+enum _ChipStyle { plain, selected, accent }
+
+class _ChipRow extends StatelessWidget {
+  final double top;
+  final List<Widget> children;
+  const _ChipRow({required this.top, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(top: top),
+      child: SizedBox(
+        height: 36,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          itemCount: children.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 8),
+          itemBuilder: (_, i) => Center(child: children[i]),
+        ),
+      ),
+    );
+  }
+}
+
+class _ZenChip extends StatelessWidget {
+  final String label;
+  final String? emoji;
+  final IconData? icon;
+  final _ChipStyle style;
+  final double height;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  const _ZenChip({
+    required this.label,
+    required this.style,
+    required this.onTap,
+    this.emoji,
+    this.icon,
+    this.onLongPress,
+    this.height = 36,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final z = ZenPalette.of(context);
+    final (bg, border, fg) = switch (style) {
+      _ChipStyle.accent => (z.tint(0.10), BorderSide(color: z.tint(0.45)), z.teal),
+      _ChipStyle.selected =>
+        (z.tint(0.14), BorderSide(color: z.tint(0.6), width: 1.5), c.textPrimary),
+      _ChipStyle.plain => (c.surfaceCard, BorderSide(color: c.border), c.textSecondary),
+    };
+    return Semantics(
+      button: true,
+      selected: style == _ChipStyle.selected,
+      child: Material(
+        color: bg,
+        shape: StadiumBorder(side: border),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          child: SizedBox(
+            height: height,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (icon != null) ...[
+                    Icon(icon, size: 17, color: fg),
+                    const SizedBox(width: 4),
+                  ],
+                  if (emoji != null) ...[
+                    Text(emoji!, style: const TextStyle(fontSize: 15, height: 1)),
+                    const SizedBox(width: 6),
+                  ],
+                  Text(
+                    label,
+                    style: TextStyle(
+                      color: fg,
+                      fontSize: 13,
+                      fontWeight: style == _ChipStyle.plain
+                          ? FontWeight.w500
+                          : FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sound tile
+// ---------------------------------------------------------------------------
 class _ZenTile extends StatefulWidget {
   final _ZenTrack track;
   final bool isAvailable;
   final bool isPlaying;
+  final bool isPaused;
   final bool isLoading;
-  final Color accent;
   final AppColors colors;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -1142,8 +2281,8 @@ class _ZenTile extends StatefulWidget {
     required this.track,
     required this.isAvailable,
     required this.isPlaying,
+    required this.isPaused,
     required this.isLoading,
-    required this.accent,
     required this.colors,
     required this.onTap,
     required this.onLongPress,
@@ -1172,16 +2311,17 @@ class _ZenTileState extends State<_ZenTile> with SingleTickerProviderStateMixin 
     ),
   ]);
 
+  bool get _shimmering => widget.isPlaying && !widget.isPaused;
+
   @override
   void initState() {
     super.initState();
-    // Stagger start slightly per tile so all tiles don't sweep in sync
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2800),
     );
     _shimmerAnim = _tween.animate(_ctrl);
-    if (widget.isPlaying) _startShimmer();
+    if (_shimmering) _startShimmer();
   }
 
   void _startShimmer() {
@@ -1194,8 +2334,9 @@ class _ZenTileState extends State<_ZenTile> with SingleTickerProviderStateMixin 
   @override
   void didUpdateWidget(_ZenTile old) {
     super.didUpdateWidget(old);
-    if (widget.isPlaying == old.isPlaying) return;
-    if (widget.isPlaying) {
+    final was = old.isPlaying && !old.isPaused;
+    if (_shimmering == was) return;
+    if (_shimmering) {
       _startShimmer();
     } else {
       _ctrl.stop();
@@ -1209,191 +2350,183 @@ class _ZenTileState extends State<_ZenTile> with SingleTickerProviderStateMixin 
     super.dispose();
   }
 
-  // ── Static tile content ────────────────────────────────────────────────
-  Widget _buildContent() {
-    final dimmed = !widget.isAvailable;
-    return Stack(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
+  @override
+  Widget build(BuildContext context) {
+    final z = ZenPalette.of(context);
+    final c = widget.colors;
+    final on = widget.isPlaying;
+    final dim = !widget.isAvailable;
+    final t = widget.track;
+
+    final content = Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(widget.track.emoji, style: const TextStyle(fontSize: 36)),
-              // Right padding guards description from overlapping the volume badge
-              Padding(
-                padding: EdgeInsets.only(right: widget.isPlaying ? 36.0 : 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.track.name,
-                      style: TextStyle(
-                        color: dimmed
-                            ? widget.colors.textMuted
-                            : widget.isPlaying
-                                ? widget.accent
-                                : widget.colors.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+              Opacity(
+                opacity: dim ? 0.45 : 1,
+                child: Text(t.emoji, style: const TextStyle(fontSize: 34, height: 1.05)),
+              ),
+              const Spacer(),
+              if (widget.isLoading)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4, right: 4),
+                  child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(z.teal),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      widget.track.description,
-                      style: TextStyle(color: widget.colors.textMuted, fontSize: 11),
-                      softWrap: true,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // Loading / playing dot — top-LEFT corner
-        if (widget.isLoading)
-          Positioned(
-            top: 10, left: 10,
-            child: SizedBox(
-              width: 14, height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation(widget.accent),
-              ),
-            ),
-          )
-        else if (widget.isPlaying)
-          Positioned(
-            top: 10, left: 10,
-            child: Container(
-              width: 8, height: 8,
-              decoration: BoxDecoration(
-                color: widget.accent,
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-
-        // Star / favourite — top-RIGHT corner, generous tap target
-        if (widget.isAvailable)
-          Positioned(
-            top: 2, right: 2,
-            child: GestureDetector(
-              onTap: widget.onToggleFavourite,
-              behavior: HitTestBehavior.opaque,
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Icon(
-                  widget.isFavourited
-                      ? Icons.star_rounded
-                      : Icons.star_outline_rounded,
-                  size: 18,
-                  color: widget.isFavourited
-                      ? widget.accent
-                      : widget.colors.textMuted.withValues(alpha: 0.40),
-                ),
-              ),
-            ),
-          ),
-
-        // Volume badge (bottom-left) — visible when playing
-        if (widget.isPlaying)
-          Positioned(
-            bottom: 10, right: 10,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.volume_up_rounded,
-                    size: 15, color: widget.accent.withValues(alpha: 0.70)),
-                const SizedBox(width: 3),
-                Text(
-                  widget.volume.round().toString(),
-                  style: TextStyle(
-                    color: widget.accent.withValues(alpha: 0.70),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
                   ),
                 ),
+              const SizedBox(width: 26), // the star sits here
+            ],
+          ),
+          const Spacer(),
+          Text(
+            t.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: dim ? c.textSecondary : on ? z.teal : c.textPrimary,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              height: 1.25,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            t.description,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: c.textSecondary, fontSize: 12, height: 1.25),
+          ),
+          if (on) const SizedBox(height: 4),
+        ],
+      ),
+    );
+
+    return Semantics(
+      button: true,
+      toggled: on,
+      enabled: widget.isAvailable,
+      label: dim ? '${t.name}, coming soon' : '${t.name}, ${t.description}',
+      value: on ? 'Volume ${widget.volume.round()}%' : null,
+      onLongPressHint: widget.onLongPress != null ? 'Adjust volume' : null,
+      child: GestureDetector(
+        onTap: widget.isAvailable && !widget.isLoading ? widget.onTap : null,
+        onLongPress: widget.onLongPress,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          decoration: BoxDecoration(
+            color: on ? z.activeBg : c.surfaceCard,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: on ? z.tint(0.6) : c.border,
+              width: on ? 1.5 : 1.0,
+            ),
+            boxShadow: on
+                ? [BoxShadow(color: z.tint(z.isDark ? 0.16 : 0.18), blurRadius: 22)]
+                : const [],
+          ),
+          child: LayoutBuilder(
+            builder: (context, box) => Stack(
+              fit: StackFit.expand,
+              children: [
+                content,
+                if (_shimmering)
+                  AnimatedBuilder(
+                    animation: _shimmerAnim,
+                    builder: (context, _) => _ShimmerOverlay(
+                      t: _shimmerAnim.value,
+                      accent: z.teal,
+                      tileWidth: box.maxWidth,
+                      tileHeight: box.maxHeight,
+                    ),
+                  ),
+
+                // Thin volume bar along the bottom while playing
+                if (on)
+                  Positioned(
+                    left: 14,
+                    right: 14,
+                    bottom: 8,
+                    child: Container(
+                      height: 3,
+                      alignment: Alignment.centerLeft,
+                      decoration: BoxDecoration(
+                        color: z.tint(0.18),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                      child: FractionallySizedBox(
+                        widthFactor: (widget.volume / 100).clamp(0.0, 1.0),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: widget.isPaused ? z.tint(0.5) : z.teal,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Star / favourite — top-right corner, generous tap target
+                if (widget.isAvailable)
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Semantics(
+                      button: true,
+                      label: widget.isFavourited ? 'Unpin ${t.name}' : 'Pin ${t.name}',
+                      excludeSemantics: true,
+                      child: GestureDetector(
+                        onTap: widget.onToggleFavourite,
+                        behavior: HitTestBehavior.opaque,
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Icon(
+                            widget.isFavourited
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            size: 20,
+                            color: widget.isFavourited
+                                ? z.teal
+                                : c.iconSecondary.withValues(alpha: z.isDark ? 0.8 : 0.7),
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  // Coming soon badge
+                  Positioned(
+                    top: 14,
+                    right: 14,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: c.surfaceElevated,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'Soon',
+                        style: TextStyle(
+                          color: c.textSecondary,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
-
-        // Coming soon badge
-        if (!widget.isAvailable)
-          Positioned(
-            bottom: 10, right: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: widget.colors.surfaceElevated,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'Soon',
-                style: TextStyle(
-                  color: widget.colors.textMuted,
-                  fontSize: 9,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = widget.accent;
-    final colors = widget.colors;
-    final playing = widget.isPlaying;
-
-    return GestureDetector(
-      onTap: widget.isAvailable && !widget.isLoading ? widget.onTap : null,
-      onLongPress: widget.onLongPress,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        decoration: BoxDecoration(
-          color: playing ? accent.withValues(alpha: 0.10) : colors.surfaceCard,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: playing ? accent.withValues(alpha: 0.60) : colors.border,
-            width: playing ? 1.8 : 1.0,
-          ),
-          boxShadow: playing
-              ? [BoxShadow(
-                  color: accent.withValues(alpha: 0.18),
-                  blurRadius: 20,
-                  spreadRadius: 1,
-                )]
-              : [],
         ),
-        // StackFit.expand ensures _buildContent fills the AnimatedContainer
-        // so Positioned children (dot, badge) sit in the correct corners.
-        child: playing
-            ? LayoutBuilder(
-                builder: (context, box) => Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    _buildContent(),
-                    AnimatedBuilder(
-                      animation: _shimmerAnim,
-                      builder: (context, _) => _ShimmerOverlay(
-                        t: _shimmerAnim.value,
-                        accent: accent,
-                        tileWidth: box.maxWidth,
-                        tileHeight: box.maxHeight,
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            : _buildContent(),
       ),
     );
   }
@@ -1434,7 +2567,7 @@ class _ShimmerOverlay extends StatelessWidget {
 
     return Positioned.fill(
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(19),
+        borderRadius: BorderRadius.circular(21),
         child: Stack(
           children: [
             Positioned(
@@ -1465,77 +2598,6 @@ class _ShimmerOverlay extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _NowPlayingBar extends StatelessWidget {
-  final Map<String, SoundHandle> handles;
-  final List<_ZenTrack> tracks;
-  final AppColors colors;
-  final Color accent;
-  final VoidCallback onStop;
-
-  const _NowPlayingBar({
-    required this.handles,
-    required this.tracks,
-    required this.colors,
-    required this.accent,
-    required this.onStop,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final playing = tracks.where((t) => handles.containsKey(t.id)).toList();
-    final label = playing.map((t) => '${t.emoji} ${t.name}').join('  ·  ');
-    final useMarquee = playing.length > 2;
-
-    final labelStyle = TextStyle(
-      color: colors.textPrimary,
-      fontSize: 13,
-      fontWeight: FontWeight.w500,
-    );
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 16, 20),
-      decoration: BoxDecoration(
-        color: colors.surfaceCard,
-        border: Border(top: BorderSide(color: colors.borderSubtle)),
-      ),
-      child: Row(
-        children: [
-          // Animated dot
-          Container(
-            width: 8, height: 8,
-            decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: useMarquee
-                ? _MarqueeText(text: label, style: labelStyle)
-                : Text(label, style: labelStyle, overflow: TextOverflow.ellipsis),
-          ),
-          const SizedBox(width: 8),
-          GestureDetector(
-            onTap: onStop,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: colors.surfaceElevated,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                'Stop all',
-                style: TextStyle(
-                  color: colors.textSecondary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1698,239 +2760,153 @@ class _ZenInfoSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(
-        24, 16, 24,
-        24 + MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Drag handle
-          Center(
-            child: Container(
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                color: colors.border,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.9),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          24, 10, 24,
+          24 + MediaQuery.paddingOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const _SheetHandle(),
+            const SizedBox(height: 24),
 
-          // Header
-          Row(
-            children: [
-              const Text('🧘', style: TextStyle(fontSize: 40)),
-              const SizedBox(width: 16),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Zen Mode',
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w700,
+            // Header
+            Row(
+              children: [
+                const Text('🧘', style: TextStyle(fontSize: 40)),
+                const SizedBox(width: 16),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Zen Mode',
+                      style: TextStyle(
+                        color: colors.textPrimary,
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                  Text(
-                    'Your ambient soundscape',
-                    style: TextStyle(color: colors.textMuted, fontSize: 13),
-                  ),
-                ],
+                    Text(
+                      'Your ambient soundscape',
+                      style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // ── Stats card ────────────────────────────────────────────────
+            _ZenStatsCard(
+              stats: stats,
+              colors: colors,
+              accent: accent,
+              onReset: (stats.totalSeconds > 0 || stats.sessionsCount > 0)
+                  ? onClearStats
+                  : null,
+            ),
+            const SizedBox(height: 16),
+
+            // Intro blurb
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: accent.withValues(alpha: 0.2)),
               ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // ── Stats card ────────────────────────────────────────────────
-          _ZenStatsCard(
-            stats: stats,
-            colors: colors,
-            accent: accent,
-            onReset: (stats.totalSeconds > 0 || stats.sessionsCount > 0)
-                ? onClearStats
-                : null,
-          ),
-          const SizedBox(height: 16),
-
-          // Intro blurb
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: accent.withValues(alpha: 0.16)),
-            ),
-            child: Text(
-              'Mix and match ambient sounds to craft the perfect focus, relaxation or sleep atmosphere. '
-              'Sounds run continuously in the background — set it up once and let it be.',
-              style: TextStyle(
-                color: colors.textSecondary,
-                fontSize: 13,
-                height: 1.55,
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-
-          // How-to items
-          _InfoItem(
-            emoji: '▶',
-            title: 'Play & stop',
-            body: 'Tap any tile to start a sound. Tap it again to stop. '
-                'Each sound fades in smoothly when started and fades out when stopped.',
-            colors: colors,
-            accent: accent,
-          ),
-          _InfoItem(
-            emoji: '🔁',
-            title: 'Seamless looping',
-            body: 'Every sound loops continuously with no gaps or interruptions — '
-                'just set it and enjoy.',
-            colors: colors,
-            accent: accent,
-          ),
-          _InfoItem(
-            emoji: '🎚️',
-            title: 'Layer sounds',
-            body: 'Tap multiple tiles to play them at the same time and blend '
-                'your own soundscape. Try Rain + Fireplace, or Forest + Stream.',
-            colors: colors,
-            accent: accent,
-          ),
-          _InfoItem(
-            emoji: '🔊',
-            title: 'Volume per sound',
-            body: 'Long-press any playing tile to adjust its volume individually '
-                'on a scale of 1–100. Default is 50.',
-            colors: colors,
-            accent: accent,
-          ),
-          _InfoItem(
-            emoji: '🔖',
-            title: 'Save a mix',
-            body: 'When sounds are playing, tap "Save mix" in the strip above the grid '
-                'to name and save your current combination. Your mixes are stored '
-                'and persist between sessions.',
-            colors: colors,
-            accent: accent,
-          ),
-          _InfoItem(
-            emoji: '▤',
-            title: 'Restore a mix',
-            body: 'Tap any saved mix chip to instantly switch to it — current sounds '
-                'stop and the saved ones fade in at their saved volumes. '
-                'Long-press a chip to delete it.',
-            colors: colors,
-            accent: accent,
-          ),
-          _InfoItem(
-            emoji: '⏹️',
-            title: 'Stop everything',
-            body: 'Tap "Stop all" in the app bar or the bottom bar to silence '
-                'all active sounds at once.',
-            colors: colors,
-            accent: accent,
-            isLast: true,
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Preset chips
-// ---------------------------------------------------------------------------
-
-class _SaveMixChip extends StatelessWidget {
-  final Color accent;
-  final AppColors colors;
-  final VoidCallback onTap;
-
-  const _SaveMixChip({required this.accent, required this.colors, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 0),
-        decoration: BoxDecoration(
-          color: accent.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: accent.withValues(alpha: 0.35)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.bookmark_add_outlined, size: 14, color: accent),
-            const SizedBox(width: 5),
-            Text(
-              'Save mix',
-              style: TextStyle(color: accent, fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PresetChip extends StatelessWidget {
-  final _ZenPreset preset;
-  final bool isActive;
-  final Color accent;
-  final AppColors colors;
-  final VoidCallback onTap;
-  final VoidCallback onLongPress;
-
-  const _PresetChip({
-    required this.preset,
-    required this.isActive,
-    required this.accent,
-    required this.colors,
-    required this.onTap,
-    required this.onLongPress,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      onLongPress: onLongPress,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
-        decoration: BoxDecoration(
-          color: isActive ? accent.withValues(alpha: 0.13) : colors.surfaceElevated,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isActive ? accent.withValues(alpha: 0.55) : colors.border,
-            width: isActive ? 1.5 : 1.0,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (isActive) ...[
-              Icon(Icons.graphic_eq_rounded, size: 13, color: accent),
-              const SizedBox(width: 5),
-            ],
-            Text(
-              preset.name,
-              style: TextStyle(
-                color: isActive ? accent : colors.textSecondary,
-                fontSize: 13,
-                fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+              child: Text(
+                'Mix and match ambient sounds to craft the perfect focus, relaxation or sleep atmosphere. '
+                'Sounds run continuously in the background — set it up once and let it be.',
+                style: TextStyle(
+                  color: colors.textSecondary,
+                  fontSize: 13,
+                  height: 1.55,
+                ),
               ),
             ),
+            const SizedBox(height: 24),
+
+            // How-to items
+            _InfoItem(
+              emoji: '▶',
+              title: 'Play & stop',
+              body: 'Tap any tile to start a sound. Tap it again to stop. '
+                  'Each sound fades in smoothly when started and fades out when stopped.',
+              colors: colors,
+              accent: accent,
+            ),
+            _InfoItem(
+              emoji: '🔁',
+              title: 'Seamless looping',
+              body: 'Every sound loops continuously with no gaps or interruptions — '
+                  'just set it and enjoy.',
+              colors: colors,
+              accent: accent,
+            ),
+            _InfoItem(
+              emoji: '🎚️',
+              title: 'Layer sounds',
+              body: 'Tap multiple tiles to play them at the same time and blend '
+                  'your own soundscape. Try Rain + Fireplace, or Forest + Stream.',
+              colors: colors,
+              accent: accent,
+            ),
+            _InfoItem(
+              emoji: '🔊',
+              title: 'Volume per sound',
+              body: 'Hold any playing tile — or open the mixer from the bar at the '
+                  'bottom — to set each sound\'s volume from 1 to 100. Default is 50.',
+              colors: colors,
+              accent: accent,
+            ),
+            _InfoItem(
+              emoji: '⏯️',
+              title: 'Pause & stop',
+              body: 'Pause holds every sound where it is; tap play to carry on. '
+                  'Stop clears the whole mix at once.',
+              colors: colors,
+              accent: accent,
+            ),
+            _InfoItem(
+              emoji: '🌙',
+              title: 'Sleep timer',
+              body: 'Tap the moon button to stop the mix after 15 minutes to 2 hours. '
+                  'With "Fade out gently" on, it softens over the last minute.',
+              colors: colors,
+              accent: accent,
+            ),
+            _InfoItem(
+              emoji: '⭐',
+              title: 'Pin favourites',
+              body: 'Tap the star on a tile to pin it to the row above the grid.',
+              colors: colors,
+              accent: accent,
+            ),
+            _InfoItem(
+              emoji: '🔖',
+              title: 'Save a mix',
+              body: 'When sounds are playing, tap "Save mix" above the grid or in the '
+                  'mixer to name and save your current combination. Your mixes are '
+                  'stored and persist between sessions.',
+              colors: colors,
+              accent: accent,
+            ),
+            _InfoItem(
+              emoji: '▤',
+              title: 'Restore a mix',
+              body: 'Tap any saved mix chip to instantly switch to it — current sounds '
+                  'stop and the saved ones fade in at their saved volumes. '
+                  'Long-press a chip to delete it.',
+              colors: colors,
+              accent: accent,
+              isLast: true,
+            ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -1939,66 +2915,6 @@ class _PresetChip extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Favourite chip — compact tile in the pinned row
-// ---------------------------------------------------------------------------
-class _FavouriteChip extends StatelessWidget {
-  final _ZenTrack track;
-  final bool isPlaying;
-  final Color accent;
-  final AppColors colors;
-  final VoidCallback onTap;
-
-  const _FavouriteChip({
-    required this.track,
-    required this.isPlaying,
-    required this.accent,
-    required this.colors,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-        decoration: BoxDecoration(
-          color: isPlaying ? accent.withValues(alpha: 0.12) : colors.surfaceElevated,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isPlaying ? accent.withValues(alpha: 0.55) : colors.border,
-            width: isPlaying ? 1.5 : 1.0,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(track.emoji, style: const TextStyle(fontSize: 17)),
-            const SizedBox(width: 6),
-            Text(
-              track.name,
-              style: TextStyle(
-                color: isPlaying ? accent : colors.textSecondary,
-                fontSize: 12,
-                fontWeight: isPlaying ? FontWeight.w600 : FontWeight.w500,
-              ),
-            ),
-            if (isPlaying) ...[
-              const SizedBox(width: 6),
-              Container(
-                width: 5, height: 5,
-                decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Stats card shown inside the info sheet
 // ---------------------------------------------------------------------------
@@ -2078,11 +2994,11 @@ class _ZenStatsCard extends StatelessWidget {
             )
           : Row(
               children: [
-                Icon(Icons.bar_chart_rounded, size: 16, color: colors.textMuted),
+                Icon(Icons.bar_chart_rounded, size: 16, color: colors.textSecondary),
                 const SizedBox(width: 8),
                 Text(
                   'Start listening to see your stats here.',
-                  style: TextStyle(color: colors.textMuted, fontSize: 13),
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
                 ),
               ],
             ),
@@ -2113,7 +3029,7 @@ class _StatCell extends StatelessWidget {
         children: [
           Text(
             '$emoji  $label',
-            style: TextStyle(color: colors.textMuted, fontSize: 11, fontWeight: FontWeight.w500),
+            style: TextStyle(color: colors.textSecondary, fontSize: 11, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 4),
           Text(
@@ -2183,7 +3099,7 @@ class _InfoItem extends StatelessWidget {
                 Text(
                   body,
                   style: TextStyle(
-                    color: colors.textMuted,
+                    color: colors.textSecondary,
                     fontSize: 12,
                     height: 1.5,
                   ),
