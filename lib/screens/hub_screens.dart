@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 
 import '../services/clip_repository.dart';
@@ -30,7 +32,12 @@ class HubItem {
 
 // ── Bottom navigation bar ────────────────────────────────────────────────────
 
-/// Sounds · Tools · Games · Settings.
+/// Sounds · Tools · Games · Settings, as a floating frosted pill.
+///
+/// Sits in [Scaffold.bottomNavigationBar] with `extendBody: true`, so pages
+/// scroll underneath and show through the blur. Scaffold adds the bar's
+/// height to the body's bottom padding — lists pad by
+/// `MediaQuery.paddingOf(context).bottom` to stay clear of it.
 class SoundrNavBar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
@@ -41,34 +48,177 @@ class SoundrNavBar extends StatelessWidget {
     required this.onSelected,
   });
 
+  static const _items = [
+    (Icons.grid_view_outlined, Icons.grid_view_rounded, 'Sounds'),
+    (Icons.handyman_outlined, Icons.handyman_rounded, 'Tools'),
+    (Icons.sports_esports_outlined, Icons.sports_esports_rounded, 'Games'),
+    (Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
+  ];
+
+  static const barHeight = 64.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final radius = BorderRadius.circular(barHeight / 2);
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Center(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            // A pill, not a slab, on tablets and in landscape.
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: dark ? 0.35 : 0.06),
+                    blurRadius: 28,
+                    spreadRadius: -6,
+                    offset: const Offset(0, 10),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: dark ? 0.25 : 0.05),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: radius,
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                  child: Container(
+                    height: barHeight,
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: c.surfaceCard.withValues(alpha: dark ? 0.6 : 0.62),
+                      borderRadius: radius,
+                      border: Border.all(
+                        color: dark
+                            ? Colors.white.withValues(alpha: 0.1)
+                            : Colors.white.withValues(alpha: 0.7),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var i = 0; i < _items.length; i++)
+                          Expanded(
+                            // The selected tab grows to fit its label.
+                            flex: i == selectedIndex ? 15 : 10,
+                            child: _NavItem(
+                              icon: _items[i].$1,
+                              selectedIcon: _items[i].$2,
+                              label: _items[i].$3,
+                              selected: i == selectedIndex,
+                              onTap: () => onSelected(i),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _NavItem({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  static const _duration = Duration(milliseconds: 260);
+
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
     final accent = Theme.of(context).colorScheme.primary;
-    NavigationDestination dest(IconData icon, IconData selected, String label) =>
-        NavigationDestination(
-          icon: Icon(icon, color: c.iconSecondary),
-          selectedIcon: Icon(selected, color: accent),
-          label: label,
-        );
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: c.borderSubtle)),
-      ),
-      child: NavigationBar(
-        selectedIndex: selectedIndex,
-        height: 66,
-        backgroundColor: c.surfaceCard,
-        surfaceTintColor: Colors.transparent,
-        indicatorColor: accent.withValues(alpha: 0.18),
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        onDestinationSelected: onSelected,
-        destinations: [
-          dest(Icons.grid_view_outlined, Icons.grid_view_rounded, 'Sounds'),
-          dest(Icons.handyman_outlined, Icons.handyman_rounded, 'Tools'),
-          dest(Icons.sports_esports_outlined, Icons.sports_esports_rounded, 'Games'),
-          dest(Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
-        ],
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      excludeSemantics: true,
+      child: Tooltip(
+        message: label,
+        excludeFromSemantics: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: _duration,
+            curve: Curves.easeOutCubic,
+            margin: const EdgeInsets.symmetric(horizontal: 2),
+            decoration: BoxDecoration(
+              color: selected
+                  ? accent.withValues(alpha: dark ? 0.22 : 0.14)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(26),
+            ),
+            child: ClipRect(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedSwitcher(
+                    duration: _duration,
+                    transitionBuilder: (child, a) =>
+                        ScaleTransition(scale: a, child: child),
+                    child: Icon(
+                      selected ? selectedIcon : icon,
+                      key: ValueKey(selected),
+                      size: 23,
+                      color: selected ? accent : c.iconSecondary,
+                    ),
+                  ),
+                  // The label slides out beside the icon when selected.
+                  Flexible(
+                    child: AnimatedSize(
+                      duration: _duration,
+                      curve: Curves.easeOutCubic,
+                      child: selected
+                          ? Padding(
+                              padding: const EdgeInsets.only(left: 7),
+                              child: Text(
+                                label,
+                                maxLines: 1,
+                                softWrap: false,
+                                overflow: TextOverflow.fade,
+                                style: TextStyle(
+                                  color: c.textPrimary,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -141,7 +291,8 @@ class _ToolsHubState extends State<ToolsHub> {
           // Phones use the full width; tablets / landscape get a centred column.
           final side = ((box.maxWidth - 600) / 2).clamp(16.0, double.infinity);
           return ListView(
-            padding: EdgeInsets.fromLTRB(side, 0, side, 24),
+            padding: EdgeInsets.fromLTRB(
+                side, 0, side, 24 + MediaQuery.paddingOf(context).bottom),
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 26, 4, 16),
@@ -658,7 +809,8 @@ class _HubScaffold extends StatelessWidget {
             )),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+        padding: EdgeInsets.fromLTRB(
+            16, 4, 16, 24 + MediaQuery.paddingOf(context).bottom),
         children: children,
       ),
     );

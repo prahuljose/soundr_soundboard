@@ -190,7 +190,8 @@ class _SettingsScreenState extends State<SettingsScreen>
         toolbarHeight: canPop ? kToolbarHeight : 0,
       ),
       body: ListView(
-        padding: EdgeInsets.fromLTRB(16, canPop ? 0 : 22, 16, 32),
+        padding: EdgeInsets.fromLTRB(
+            16, canPop ? 0 : 22, 16, 32 + MediaQuery.paddingOf(context).bottom),
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
@@ -843,29 +844,37 @@ class _NavOption extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: tabs
-          ? Column(children: [
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(5),
-                  child: cells(),
-                ),
+          // Content under a floating pill, like the real tab bar.
+          ? Stack(children: [
+              Padding(
+                padding: const EdgeInsets.all(5),
+                child: cells(),
               ),
-              Container(
-                height: 11,
-                color: faint,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    for (var i = 0; i < 4; i++)
-                      Container(
-                        width: 5,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: i == 0 ? ink : ink.withValues(alpha: 0.45),
-                          shape: BoxShape.circle,
+              Positioned(
+                left: 4,
+                right: 4,
+                bottom: 4,
+                child: Container(
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: faint,
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(color: ink.withValues(alpha: 0.5), width: 1),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      for (var i = 0; i < 4; i++)
+                        Container(
+                          width: i == 0 ? 9 : 4,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: i == 0 ? ink : ink.withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ])

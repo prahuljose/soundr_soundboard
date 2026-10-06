@@ -1843,15 +1843,19 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     final c = Theme.of(context).extension<AppColors>()!;
     final tab = tabs ? _tab : _tabSounds;
     final soundsBody = _ready
-        ? Stack(
-            children: [
-              _buildBody(),
-              Positioned(
-                right: 16,
-                bottom: 24,
-                child: _buildFabs(),
-              ),
-            ],
+        // Builder: the body's own MediaQuery, whose bottom padding includes
+        // the floating tab bar.
+        ? Builder(
+            builder: (context) => Stack(
+              children: [
+                _buildBody(),
+                Positioned(
+                  right: 16,
+                  bottom: 24 + MediaQuery.paddingOf(context).bottom,
+                  child: _buildFabs(),
+                ),
+              ],
+            ),
           )
         : _buildLoadingScreen();
 
@@ -1893,6 +1897,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
       },
       child: Scaffold(
         drawer: _ready && !tabs ? _buildDrawer(c) : null,
+        // Pages scroll behind the floating, see-through tab bar.
+        extendBody: _ready && tabs,
         // Other tabs bring their own app bars.
         appBar: tab == _tabSounds ? _buildAppBar() : null,
         body: !_ready || !tabs
@@ -2599,7 +2605,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                     builder: (context, density, _) {
                       final gap = density == GridDensity.compact ? 8.0 : 10.0;
                       return GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                        padding: EdgeInsets.fromLTRB(
+                            16, 0, 16, 100 + MediaQuery.paddingOf(context).bottom),
                         // Max-extent (not a fixed count) so landscape phones
                         // and tablets get more columns automatically.
                         gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
