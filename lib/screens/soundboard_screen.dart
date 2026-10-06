@@ -27,6 +27,7 @@ import '../widgets/sound_button.dart';
 import '../widgets/sound_sheet.dart';
 import 'clip_editor_screen.dart';
 import 'decibel_screen.dart';
+import 'guitar_tuner_screen.dart';
 import 'metronome_screen.dart';
 import 'spectrum_screen.dart';
 import 'voice_memo_screen.dart';
@@ -1964,6 +1965,13 @@ class _SoundboardScreenState extends State<SoundboardScreen>
       ],
       tools: [
         HubItem(
+          icon: Icons.music_note_rounded,
+          color: const Color(0xFF7DDB86),
+          title: 'Guitar tuner',
+          subtitle: 'Pluck a string, tune it by ear or eye',
+          onOpen: () => _open(const GuitarTunerScreen()),
+        ),
+        HubItem(
           icon: Icons.graphic_eq_rounded,
           color: const Color(0xFFFF9F50),
           title: 'Decibel meter',
@@ -2182,6 +2190,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
                     // ── Tools ────────────────────────────────────────────────
                     _DrawerSectionLabel('TOOLS'),
+                    _DrawerItem(
+                      icon: Icons.music_note_rounded,
+                      label: 'Guitar Tuner',
+                      onTap: () => nav(const GuitarTunerScreen()),
+                    ),
                     _DrawerItem(
                       icon: Icons.graphic_eq_rounded,
                       label: 'Decibel Meter',

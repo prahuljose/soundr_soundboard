@@ -61,6 +61,13 @@ class PitchDetector {
 
   late final Float64List _diff = Float64List(_tauMax + 1);
 
+  /// Input samples received so far — an audio clock for [onReading].
+  int get samplesIn => _samplesIn;
+  int _samplesIn = 0;
+
+  /// [samplesIn] as milliseconds of audio.
+  int get audioMs => _samplesIn * 1000 ~/ sampleRate;
+
   PitchDetector({
     this.sampleRate = 44100,
     this.minHz = 60,
@@ -102,6 +109,7 @@ class PitchDetector {
   }
 
   void _addSample(double s) {
+    _samplesIn++;
     // 2:1 downsample; averaging pairs is a gentle low-pass against aliasing.
     final first = _pendingHalf;
     if (first == null) {

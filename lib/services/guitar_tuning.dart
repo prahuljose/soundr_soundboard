@@ -4,17 +4,45 @@ import 'pitch_detector.dart';
 
 // ── Notes ───────────────────────────────────────────────────────────────────
 
-const _sharpNames = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
-const _flatNames = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'];
+// '#' and 'b' rather than ♯/♭: the app font has no music symbols.
+const _sharpNames = [
+  'C',
+  'C#',
+  'D',
+  'D#',
+  'E',
+  'F',
+  'F#',
+  'G',
+  'G#',
+  'A',
+  'A#',
+  'B',
+];
+const _flatNames = [
+  'C',
+  'Db',
+  'D',
+  'Eb',
+  'E',
+  'F',
+  'Gb',
+  'G',
+  'Ab',
+  'A',
+  'Bb',
+  'B',
+];
 
-/// Letter name without octave, e.g. "E", "F♯", "B♭".
+/// Letter name without octave, e.g. "E", "F#", "Bb".
 String noteName(int midi, {bool flats = false}) =>
     (flats ? _flatNames : _sharpNames)[midi % 12];
 
 /// Scientific octave number (middle C = C4).
 int noteOctave(int midi) => midi ~/ 12 - 1;
 
-double midiToHz(num midi, {double a4 = 440}) => a4 * pow(2, (midi - 69) / 12).toDouble();
+double midiToHz(num midi, {double a4 = 440}) =>
+    a4 * pow(2, (midi - 69) / 12).toDouble();
 
 double hzToMidi(double hz, {double a4 = 440}) => 69 + 12 * log(hz / a4) / ln2;
 
@@ -44,7 +72,14 @@ class GuitarTuning {
 const guitarTunings = [
   GuitarTuning('standard', 'Standard', [40, 45, 50, 55, 59, 64]),
   GuitarTuning('drop_d', 'Drop D', [38, 45, 50, 55, 59, 64]),
-  GuitarTuning('half_down', 'Half step down', [39, 44, 49, 54, 58, 63], flats: true),
+  GuitarTuning('half_down', 'Half step down', [
+    39,
+    44,
+    49,
+    54,
+    58,
+    63,
+  ], flats: true),
   GuitarTuning('full_down', 'Full step down', [38, 43, 48, 53, 57, 62]),
   GuitarTuning('drop_c', 'Drop C', [36, 43, 48, 53, 57, 62]),
   GuitarTuning('open_g', 'Open G', [38, 43, 50, 55, 59, 62]),
@@ -52,8 +87,10 @@ const guitarTunings = [
   GuitarTuning('dadgad', 'DADGAD', [38, 45, 50, 55, 57, 62]),
 ];
 
-GuitarTuning tuningById(String? id) =>
-    guitarTunings.firstWhere((t) => t.id == id, orElse: () => guitarTunings.first);
+GuitarTuning tuningById(String? id) => guitarTunings.firstWhere(
+  (t) => t.id == id,
+  orElse: () => guitarTunings.first,
+);
 
 // ── Tuner engine ────────────────────────────────────────────────────────────
 
@@ -229,8 +266,8 @@ class TunerEngine {
     final status = cents.abs() <= inTuneCents
         ? TunerStatus.inTune
         : cents < 0
-            ? TunerStatus.flat
-            : TunerStatus.sharp;
+        ? TunerStatus.flat
+        : TunerStatus.sharp;
 
     _trackTuned(stringIndex, cents, nowMs);
 
@@ -255,12 +292,15 @@ class TunerEngine {
   int _nearestString(double m) {
     var best = 0;
     for (var i = 1; i < tuning.strings.length; i++) {
-      if ((m - tuning.strings[i]).abs() < (m - tuning.strings[best]).abs()) best = i;
+      if ((m - tuning.strings[i]).abs() < (m - tuning.strings[best]).abs()) {
+        best = i;
+      }
     }
     final current = _autoString;
     if (current != null &&
         current != best &&
-        (m - tuning.strings[current]).abs() - (m - tuning.strings[best]).abs() < 0.3) {
+        (m - tuning.strings[current]).abs() - (m - tuning.strings[best]).abs() <
+            0.3) {
       best = current;
     }
     return _autoString = best;

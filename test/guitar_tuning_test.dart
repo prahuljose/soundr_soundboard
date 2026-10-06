@@ -31,8 +31,8 @@ void main() {
       expect(midiToHz(40), closeTo(82.41, 0.01));
       expect(noteName(40), 'E');
       expect(noteOctave(40), 2);
-      expect(noteName(63, flats: true), 'E♭');
-      expect(noteName(66), 'F♯');
+      expect(noteName(63, flats: true), 'Eb');
+      expect(noteName(66), 'F#');
       expect(centsOff(440 * pow(2, 7 / 1200).toDouble(), 69), closeTo(7, 1e-9));
       expect(midiToHz(69, a4: 432), 432);
     });
@@ -40,7 +40,7 @@ void main() {
     test('tunings', () {
       expect(guitarTunings.first.letters, 'E A D G B E');
       expect(tuningById('drop_d').letters, 'D A D G B E');
-      expect(tuningById('half_down').letters, 'E♭ A♭ D♭ G♭ B♭ E♭');
+      expect(tuningById('half_down').letters, 'Eb Ab Db Gb Bb Eb');
       expect(tuningById('dadgad').letters, 'D A D G A D');
       expect(tuningById('nope').id, 'standard');
       for (final t in guitarTunings) {
