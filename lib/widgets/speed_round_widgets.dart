@@ -411,6 +411,92 @@ class _MiniWave extends StatelessWidget {
   }
 }
 
+/// The sound's emoji on its category colour — the same pairing as its
+/// soundboard button, so answers are recognisable at a glance.
+class SpeedRoundEmojiTile extends StatelessWidget {
+  final SoundModel sound;
+  final double size;
+
+  const SpeedRoundEmojiTile({super.key, required this.sound, this.size = 38});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = speedRoundSoundColor(context, sound);
+    return ExcludeSemantics(
+      child: Container(
+        width: size,
+        height: size,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(size * 0.32),
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+        ),
+        child: Text(sound.emoji, style: TextStyle(fontSize: size * 0.53, height: 1)),
+      ),
+    );
+  }
+}
+
+/// The right answer on the game-over card: emoji, name, category and a
+/// button to hear it again.
+class SpeedRoundAnswerCard extends StatelessWidget {
+  final SoundModel sound;
+  final VoidCallback onPlay;
+
+  const SpeedRoundAnswerCard({super.key, required this.sound, required this.onPlay});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final green = speedRoundCorrect(context);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 10, 6, 10),
+      decoration: BoxDecoration(
+        color: Color.alphaBlend(green.withValues(alpha: 0.1), c.surfaceCard),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: green.withValues(alpha: 0.45), width: 1.5),
+      ),
+      child: Row(
+        children: [
+          SpeedRoundEmojiTile(sound: sound, size: 48),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  sound.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: c.textPrimary,
+                    fontSize: 16,
+                    height: 1.2,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  sound.category,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: c.textSecondary, fontSize: 12.5),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Play ${sound.name}',
+            onPressed: onPlay,
+            icon: Icon(Icons.play_circle_fill_rounded, size: 34, color: green),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// One of the four answer buttons.
 class SpeedRoundOption extends StatelessWidget {
   final SoundModel sound;
@@ -479,28 +565,7 @@ class SpeedRoundOption extends StatelessWidget {
               padding: EdgeInsets.symmetric(horizontal: 15 - width),
               child: Row(
                 children: [
-                  // The sound's emoji on its category colour — the same
-                  // pairing as its soundboard button.
-                  ExcludeSemantics(
-                    child: Container(
-                      width: 38,
-                      height: 38,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: speedRoundSoundColor(context, sound)
-                            .withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: speedRoundSoundColor(context, sound)
-                              .withValues(alpha: 0.4),
-                        ),
-                      ),
-                      child: Text(
-                        sound.emoji,
-                        style: const TextStyle(fontSize: 20, height: 1),
-                      ),
-                    ),
-                  ),
+                  SpeedRoundEmojiTile(sound: sound),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(

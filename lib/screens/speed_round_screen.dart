@@ -375,7 +375,12 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
                 score: _score,
                 questionsAnswered: _questionsAnswered,
                 timedOut: _chosen == null,
-                answerName: _target?.name,
+                answer: _target,
+                picked: _chosen,
+                onPlayAnswer: () {
+                  final id = _target?.id;
+                  if (id != null) _playSound(id);
+                },
                 bestScore: _bestScore,
                 isNewBest: _isNewBest,
                 accent: accent,
@@ -701,7 +706,9 @@ class _GameOverOverlay extends StatelessWidget {
   final int score;
   final int questionsAnswered;
   final bool timedOut;
-  final String? answerName;
+  final SoundModel? answer;
+  final SoundModel? picked;
+  final VoidCallback onPlayAnswer;
   final int? bestScore;
   final bool isNewBest;
   final Color accent;
@@ -713,7 +720,9 @@ class _GameOverOverlay extends StatelessWidget {
     required this.score,
     required this.questionsAnswered,
     required this.timedOut,
-    required this.answerName,
+    required this.answer,
+    required this.picked,
+    required this.onPlayAnswer,
     required this.bestScore,
     required this.isNewBest,
     required this.accent,
@@ -767,16 +776,58 @@ class _GameOverOverlay extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  answerName == null
-                      ? 'You ran out of time.'
-                      : timedOut
-                      ? 'Out of time — it was “$answerName”.'
-                      : 'It was “$answerName”.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
-                ),
+                if (answer case final a?) ...[
+                  const SizedBox(height: 18),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 4, bottom: 8),
+                      child: Text(
+                        'THE ANSWER WAS',
+                        style: TextStyle(
+                          color: colors.textMuted,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
+                  ),
+                  SpeedRoundAnswerCard(sound: a, onPlay: onPlayAnswer),
+                  if (picked case final p? when p.id != a.id) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'You picked ',
+                          style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                        ),
+                        Text(p.emoji, style: const TextStyle(fontSize: 14)),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            p.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.textPrimary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ] else ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'You ran out of time.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                  ),
+                ],
                 const SizedBox(height: 20),
                 Row(
                   children: [
