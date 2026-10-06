@@ -100,8 +100,14 @@ object QuickSoundPlayer {
      * Plays [sound]; [onDone] runs exactly once when it ends, fails, is
      * stopped or is replaced. [playingId] already names the new sound when a
      * replaced sound's [onDone] runs, so listeners never see a gap.
+     * [onStarted] runs once the sound is actually playing.
      */
-    fun play(context: Context, sound: QuickSound, onDone: () -> Unit = {}) {
+    fun play(
+        context: Context,
+        sound: QuickSound,
+        onStarted: () -> Unit = {},
+        onDone: () -> Unit = {},
+    ) {
         val previous = current
         val player = MediaPlayer()
         val session = Session(sound.id, player, onDone)
@@ -125,6 +131,7 @@ object QuickSoundPlayer {
             player.setOnPreparedListener { mp ->
                 if (sound.startMs > 0) seek(mp, sound.startMs)
                 mp.start()
+                onStarted()
                 if (sound.endMs > sound.startMs) {
                     val task = Runnable { finish(session) }
                     session.stopTask = task

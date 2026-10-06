@@ -56,8 +56,9 @@ class QuickSoundsWidget : AppWidgetProvider() {
     private fun play(app: Context, intent: Intent) {
         val index = intent.getIntExtra(EXTRA_INDEX, -1)
         val sound = QuickSoundStore.load(app).getOrNull(index) ?: return
-        // Keep the receiver alive while the sound plays (capped well inside
-        // the broadcast time limit; playback itself carries on regardless).
+        // Keep the receiver alive only until playback has started. Widget
+        // broadcasts are delivered one at a time, so holding it for the
+        // whole sound would queue a Stop (or another tap) until it ended.
         val pending = goAsync()
         val handler = Handler(Looper.getMainLooper())
         var done = false
@@ -67,10 +68,16 @@ class QuickSoundsWidget : AppWidgetProvider() {
                 pending.finish()
             }
         }
-        handler.postDelayed(finish, 9_000)
-        QuickSoundPlayer.play(app, sound) {
+        handler.postDelayed(finish, 3_000)
+        val release = {
             handler.removeCallbacks(finish)
             finish.run()
+        }
+        QuickSoundPlayer.play(
+            app, sound,
+            onStarted = release,
+        ) {
+            release()
             // Replaced by another sound → that one's render shows it instead.
             if (QuickSoundPlayer.playingId == null) updateAll(app)
         }
