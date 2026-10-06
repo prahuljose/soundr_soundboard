@@ -202,6 +202,11 @@ class _ZenScreenState extends State<ZenScreen> {
 
   // Every handle is paused (the dock's Pause button)
   bool _paused = false;
+  // Bumped on every pause/resume/stop so a pause fade that's been
+  // overtaken doesn't pause the sounds when it finishes.
+  int _pauseGen = 0;
+  // Content has scrolled under the header.
+  bool _scrolledUnder = false;
 
   // Usage stats. A session runs from the first sound starting to the mix
   // emptying; time spent paused is not counted.
@@ -347,6 +352,17 @@ class _ZenScreenState extends State<ZenScreen> {
     try { SoLoud.instance.stop(h).ignore(); } catch (_) {}
   }
 
+  /// Fades to silence, then SoLoud stops the sound itself.
+  void _slFadeStop(SoundHandle h, Duration time) {
+    if (!_audio) return;
+    try {
+      SoLoud.instance.fadeVolume(h, 0.0, time);
+      SoLoud.instance.scheduleStop(h, time);
+    } catch (_) {
+      _slStop(h);
+    }
+  }
+
   // ── Notifications ────────────────────────────────────────────────────────
 
   Future<void> _initNotifications() async {
@@ -481,6 +497,7 @@ class _ZenScreenState extends State<ZenScreen> {
   // ── Playback ─────────────────────────────────────────────────────────────
 
   static const _fadeDuration = Duration(seconds: 1);
+  static const _pauseFade = Duration(milliseconds: 600);
 
   Future<void> _toggle(_ZenTrack track) async {
     if (!_available.contains(track.id)) return;
@@ -568,15 +585,35 @@ class _ZenScreenState extends State<ZenScreen> {
   /// Pauses or resumes every sound in the mix.
   void _setPaused(bool paused) {
     if (_paused == paused || (paused && _handles.isEmpty)) return;
-    for (final h in _handles.values) {
-      _slPause(h, paused);
+    final gen = ++_pauseGen;
+    if (paused) {
+      // Fade everything out, then pause once it's silent. Sounds already
+      // fading out of the mix are left to finish on their own.
+      final handles = _handles.values.toList();
+      for (final h in handles) {
+        _slFade(h, 0.0, _pauseFade);
+      }
+      late final Timer timer;
+      timer = Timer(_pauseFade, () {
+        _pendingStops.remove(timer);
+        if (gen != _pauseGen) return; // resumed or stopped meanwhile
+        for (final h in handles) {
+          _slPause(h, true);
+        }
+      });
+      _pendingStops.add(timer);
+    } else {
+      // Unpause silent (or mid fade-out) and fade back up to each volume.
+      for (final e in _handles.entries) {
+        _slPause(e.value, false);
+        if (_sleepFading) {
+          _fadeForSleep(e.value);
+        } else {
+          _slFade(e.value, (_volumes[e.key] ?? 50) / 50.0, _pauseFade);
+        }
+      }
     }
     if (paused) {
-      // A sound mid fade-out would sit paused forever; finish it now.
-      for (final h in _fadingOut.values) {
-        _slStop(h);
-      }
-      _fadingOut.clear();
       final start = _segmentStart;
       if (start != null) {
         _sessionSecs += DateTime.now().difference(start).inSeconds;
@@ -590,11 +627,16 @@ class _ZenScreenState extends State<ZenScreen> {
   }
 
   void _stopAll({bool notify = true, bool keepSleep = false}) {
-    for (final handle in _handles.values) {
-      _slStop(handle);
-    }
-    for (final handle in _fadingOut.values) {
-      _slStop(handle);
+    final wasPaused = _paused;
+    _pauseGen++; // a pending pause no longer applies
+    for (final handle in [..._handles.values, ..._fadingOut.values]) {
+      // Fade out unless the screen is closing (its sources are disposed
+      // right after) or the mix is paused (a paused sound never fades).
+      if (notify && !wasPaused) {
+        _slFadeStop(handle, _fadeDuration);
+      } else {
+        _slStop(handle);
+      }
     }
     if (!keepSleep) _cancelSleep(restore: false, notify: notify);
     if (notify && mounted) {
@@ -1253,8 +1295,16 @@ class _ZenScreenState extends State<ZenScreen> {
   static const _kHint = 'Tap a sound to play it · hold a playing one for volume';
 
   Widget _buildHeader(AppColors c, Color accent) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: _scrolledUnder ? c.borderSubtle : Colors.transparent,
+          ),
+        ),
+      ),
       child: Row(
         children: [
           ZenHeaderButton(
@@ -1442,11 +1492,21 @@ class _ZenScreenState extends State<ZenScreen> {
               children: [
                 _buildHeader(c, z.teal),
                 Expanded(
-                  child: CustomScrollView(
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (n) {
+                      final under = n.depth == 0 && n.metrics.axis == Axis.vertical
+                          ? n.metrics.pixels > 0.5
+                          : _scrolledUnder;
+                      if (under != _scrolledUnder) {
+                        setState(() => _scrolledUnder = under);
+                      }
+                      return false;
+                    },
+                    child: CustomScrollView(
                     slivers: [
                       SliverToBoxAdapter(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+                          padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
                           child: Text(
                             _kHint,
                             style: TextStyle(color: c.textSecondary, fontSize: 13),
@@ -1547,6 +1607,7 @@ class _ZenScreenState extends State<ZenScreen> {
                         ),
                       ),
                     ],
+                  ),
                   ),
                 ),
               ],
