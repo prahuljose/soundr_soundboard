@@ -258,20 +258,47 @@ class _LogoBars extends StatelessWidget {
   }
 }
 
+/// An extra file the share sheet can send along with the card, behind an
+/// on/off switch (e.g. the audio clip behind a score).
+class ShareAttachment {
+  /// Switch label, e.g. "Include my clip".
+  final String label;
+  final IconData icon;
+
+  /// Whether the switch starts on.
+  final bool initiallyOn;
+
+  /// Writes the file and returns it, or null if that failed.
+  final Future<XFile?> Function() create;
+
+  const ShareAttachment({
+    required this.label,
+    required this.create,
+    this.icon = Icons.graphic_eq_rounded,
+    this.initiallyOn = true,
+  });
+}
+
 /// Shows [card] in a bottom sheet with a Share button. Sharing renders the
 /// card to a 1080×1350 PNG (Instagram's portrait size) and opens the system
-/// share sheet with [shareText] as the caption.
+/// share sheet with [shareText] as the caption. With an [attachment], a
+/// switch lets the sender add that file too.
 Future<void> showShareCardSheet(
   BuildContext context, {
   required ShareCard card,
   required String shareText,
   required String fileName,
+  ShareAttachment? attachment,
 }) {
   return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
-    builder: (ctx) =>
-        _ShareCardSheet(card: card, shareText: shareText, fileName: fileName),
+    builder: (ctx) => _ShareCardSheet(
+      card: card,
+      shareText: shareText,
+      fileName: fileName,
+      attachment: attachment,
+    ),
   );
 }
 
@@ -279,11 +306,13 @@ class _ShareCardSheet extends StatefulWidget {
   final ShareCard card;
   final String shareText;
   final String fileName;
+  final ShareAttachment? attachment;
 
   const _ShareCardSheet({
     required this.card,
     required this.shareText,
     required this.fileName,
+    this.attachment,
   });
 
   @override
@@ -293,6 +322,7 @@ class _ShareCardSheet extends StatefulWidget {
 class _ShareCardSheetState extends State<_ShareCardSheet> {
   final _boundaryKey = GlobalKey();
   bool _busy = false;
+  late bool _attach = widget.attachment?.initiallyOn ?? false;
 
   Future<void> _share() async {
     setState(() => _busy = true);
@@ -307,8 +337,10 @@ class _ShareCardSheetState extends State<_ShareCardSheet> {
       await dir.create(recursive: true);
       final file = File('${dir.path}/${widget.fileName}.png');
       await file.writeAsBytes(bytes!.buffer.asUint8List(), flush: true);
+      final extra = _attach ? await widget.attachment?.create() : null;
       await Share.shareXFiles([
         XFile(file.path, mimeType: 'image/png'),
+        ?extra,
       ], text: '${widget.shareText}\n$soundrPlayStoreUrl');
     } catch (_) {
       if (mounted) {
@@ -326,6 +358,7 @@ class _ShareCardSheetState extends State<_ShareCardSheet> {
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
     final accent = Theme.of(context).colorScheme.primary;
+    final onAccent = Theme.of(context).colorScheme.onPrimary;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
@@ -358,6 +391,31 @@ class _ShareCardSheetState extends State<_ShareCardSheet> {
                 ),
               ),
             ),
+            if (widget.attachment case final a?) ...[
+              const SizedBox(height: 12),
+              Material(
+                color: c.surfaceElevated.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(16),
+                child: SwitchListTile(
+                  value: _attach,
+                  onChanged: _busy ? null : (v) => setState(() => _attach = v),
+                  secondary: Icon(a.icon, color: accent),
+                  title: Text(
+                    a.label,
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  activeThumbColor: accent,
+                  contentPadding: const EdgeInsets.only(left: 16, right: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             SizedBox(
               width: double.infinity,
@@ -365,12 +423,12 @@ class _ShareCardSheetState extends State<_ShareCardSheet> {
               child: FilledButton.icon(
                 onPressed: _busy ? null : _share,
                 icon: _busy
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.white,
+                          color: onAccent,
                         ),
                       )
                     : const Icon(Icons.ios_share_rounded, size: 20),
@@ -380,7 +438,7 @@ class _ShareCardSheetState extends State<_ShareCardSheet> {
                 ),
                 style: FilledButton.styleFrom(
                   backgroundColor: accent,
-                  foregroundColor: Colors.white,
+                  foregroundColor: onAccent,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
                   ),

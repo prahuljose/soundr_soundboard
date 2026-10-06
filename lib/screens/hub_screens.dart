@@ -1,5 +1,9 @@
+import 'dart:math' show max, min, pi, sin;
+import 'dart:ui' show ImageFilter, lerpDouble;
+
 import 'package:flutter/material.dart';
 
+import '../services/clip_repository.dart';
 import '../services/personal_bests.dart';
 import '../services/zen_last_mix.dart';
 import '../theme/app_colors.dart';
@@ -29,7 +33,12 @@ class HubItem {
 
 // ── Bottom navigation bar ────────────────────────────────────────────────────
 
-/// Sounds · Tools · Games · Settings.
+/// Sounds · Tools · Games · Settings, as a floating frosted pill.
+///
+/// Sits in [Scaffold.bottomNavigationBar] with `extendBody: true`, so pages
+/// scroll underneath and show through the blur. Scaffold adds the bar's
+/// height to the body's bottom padding — lists pad by
+/// `MediaQuery.paddingOf(context).bottom` to stay clear of it.
 class SoundrNavBar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onSelected;
@@ -40,34 +49,340 @@ class SoundrNavBar extends StatelessWidget {
     required this.onSelected,
   });
 
+  static const _items = [
+    (Icons.grid_view_outlined, Icons.grid_view_rounded, 'Sounds'),
+    (Icons.handyman_outlined, Icons.handyman_rounded, 'Tools'),
+    (Icons.sports_esports_outlined, Icons.sports_esports_rounded, 'Games'),
+    (Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
+  ];
+
+  static const barHeight = 64.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final radius = BorderRadius.circular(barHeight / 2);
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Center(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            // A pill, not a slab, on tablets and in landscape.
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: radius,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: dark ? 0.35 : 0.06),
+                    blurRadius: 28,
+                    spreadRadius: -6,
+                    offset: const Offset(0, 10),
+                  ),
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: dark ? 0.25 : 0.05),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: radius,
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                  child: Container(
+                    height: barHeight,
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: c.surfaceCard.withValues(alpha: dark ? 0.6 : 0.62),
+                      borderRadius: radius,
+                      border: Border.all(
+                        color: dark
+                            ? Colors.white.withValues(alpha: 0.1)
+                            : Colors.white.withValues(alpha: 0.7),
+                      ),
+                    ),
+                    child: _NavTrack(
+                      items: _items,
+                      selected: selectedIndex,
+                      onSelected: onSelected,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The tabs and the sliding highlight. One animation runs from the tab
+/// being left to the tab picked: the pill slides (stretching a little
+/// mid-flight), the old tab's label folds away as the new one's unfolds,
+/// and the widths flow between them. Tabs in between stay put.
+class _NavTrack extends StatefulWidget {
+  final List<(IconData, IconData, String)> items;
+  final int selected;
+  final ValueChanged<int> onSelected;
+
+  const _NavTrack({
+    required this.items,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  State<_NavTrack> createState() => _NavTrackState();
+}
+
+class _NavTrackState extends State<_NavTrack>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+    value: 1,
+  );
+  late final Animation<double> _p =
+      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+  late int _from = widget.selected;
+
+  @override
+  void didUpdateWidget(_NavTrack old) {
+    super.didUpdateWidget(old);
+    if (old.selected != widget.selected) {
+      _from = old.selected;
+      _c.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
     final accent = Theme.of(context).colorScheme.primary;
-    NavigationDestination dest(IconData icon, IconData selected, String label) =>
-        NavigationDestination(
-          icon: Icon(icon, color: c.iconSecondary),
-          selectedIcon: Icon(selected, color: accent),
-          label: label,
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final items = widget.items;
+    final n = items.length;
+    final to = widget.selected;
+    final labelStyle = TextStyle(
+      color: c.textPrimary,
+      fontSize: 13.5,
+      fontWeight: FontWeight.w700,
+    );
+    final scaler = MediaQuery.textScalerOf(context);
+
+    return AnimatedBuilder(
+      animation: _p,
+      builder: (context, _) => LayoutBuilder(builder: (context, box) {
+        final p = _p.value;
+        // 0..1: how selected each tab is at this instant.
+        double amount(int i) => i == to
+            ? (_from == to ? 1 : p)
+            : i == _from
+                ? 1 - p
+                : 0;
+
+        // Room a tab needs on top of its icon to show its label, measured
+        // so it never clips; capped so the other icons keep ~44 px.
+        final maxExtra = max(0.0, box.maxWidth - n * 44.0);
+        double extra(int i) {
+          final tp = TextPainter(
+            text: TextSpan(text: items[i].$3, style: labelStyle),
+            textDirection: TextDirection.ltr,
+            textScaler: scaler,
+            maxLines: 1,
+          )..layout();
+          return min(tp.width + 7 + 14, maxExtra);
+        }
+
+        final extras = [for (var i = 0; i < n; i++) extra(i) * amount(i)];
+        final base = (box.maxWidth - extras.fold<double>(0, (a, e) => a + e)) / n;
+        final widths = [for (final e in extras) base + e];
+        final lefts = <double>[0];
+        for (var i = 1; i < n; i++) {
+          lefts.add(lefts[i - 1] + widths[i - 1]);
+        }
+
+        // Pill: from the old tab's slot to the new one's.
+        final stretch = sin(p * pi) * 16 * (_from == to ? 0 : 1);
+        final pillLeft = lerpDouble(lefts[_from], lefts[to], p)! - stretch / 2;
+        final pillWidth = lerpDouble(widths[_from], widths[to], p)! + stretch;
+
+        return Stack(
+          children: [
+            Positioned(
+              left: pillLeft + 2,
+              width: max(0, pillWidth - 4),
+              top: 0,
+              bottom: 0,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: dark ? 0.22 : 0.14),
+                  borderRadius: BorderRadius.circular(26),
+                ),
+              ),
+            ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < n; i++)
+                  SizedBox(
+                    width: widths[i],
+                    child: _NavItem(
+                      icon: items[i].$1,
+                      selectedIcon: items[i].$2,
+                      label: items[i].$3,
+                      labelStyle: labelStyle,
+                      selected: i == to,
+                      amount: amount(i),
+                      onTap: () => widget.onSelected(i),
+                    ),
+                  ),
+              ],
+            ),
+          ],
         );
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: c.borderSubtle)),
+      }),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final TextStyle labelStyle;
+  final bool selected;
+
+  /// 0..1 while animating: drives colour, icon fill and the label reveal.
+  final double amount;
+  final VoidCallback onTap;
+
+  const _NavItem({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.labelStyle,
+    required this.selected,
+    required this.amount,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final accent = Theme.of(context).colorScheme.primary;
+    // Ease the reveal so the label appears once the pill has mostly arrived.
+    final reveal = Curves.easeIn.transform(amount);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      excludeSemantics: true,
+      child: Tooltip(
+        message: label,
+        excludeFromSemantics: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Transform.scale(
+                // A small lift as the tab becomes active.
+                scale: 1 + 0.08 * sin(amount * pi),
+                child: Icon(
+                  amount > 0.5 ? selectedIcon : icon,
+                  size: 23,
+                  color: Color.lerp(c.iconSecondary, accent, amount),
+                ),
+              ),
+              if (reveal > 0.01)
+                Flexible(
+                  child: ClipRect(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: reveal,
+                      child: Opacity(
+                        opacity: reveal,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 7),
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.clip,
+                            style: labelStyle,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
-      child: NavigationBar(
-        selectedIndex: selectedIndex,
-        height: 66,
-        backgroundColor: c.surfaceCard,
-        surfaceTintColor: Colors.transparent,
-        indicatorColor: accent.withValues(alpha: 0.18),
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        onDestinationSelected: onSelected,
-        destinations: [
-          dest(Icons.grid_view_outlined, Icons.grid_view_rounded, 'Sounds'),
-          dest(Icons.handyman_outlined, Icons.handyman_rounded, 'Tools'),
-          dest(Icons.sports_esports_outlined, Icons.sports_esports_rounded, 'Games'),
-          dest(Icons.settings_outlined, Icons.settings_rounded, 'Settings'),
-        ],
+    );
+  }
+}
+
+/// Fades and lifts [child] in whenever [index] changes — the page switch
+/// under the tab bar. [child] (an IndexedStack) is kept, not rebuilt, so
+/// every tab keeps its scroll position and state.
+class TabFade extends StatefulWidget {
+  final int index;
+  final Widget child;
+
+  const TabFade({super.key, required this.index, required this.child});
+
+  @override
+  State<TabFade> createState() => _TabFadeState();
+}
+
+class _TabFadeState extends State<TabFade> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+    value: 1,
+  );
+  late final Animation<double> _curve =
+      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+
+  @override
+  void didUpdateWidget(TabFade old) {
+    super.didUpdateWidget(old);
+    if (old.index != widget.index) _c.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _curve,
+      child: widget.child,
+      builder: (context, child) => Opacity(
+        opacity: 0.35 + 0.65 * _curve.value,
+        child: Transform.translate(
+          offset: Offset(0, 10 * (1 - _curve.value)),
+          child: child,
+        ),
       ),
     );
   }
@@ -75,14 +390,23 @@ class SoundrNavBar extends StatelessWidget {
 
 // ── Tools tab ────────────────────────────────────────────────────────────────
 
-/// Zen Mode hero, the two Morse tools and a list of audio tools.
+/// A labelled group of tools on the Tools tab.
+class HubSection {
+  final String title;
+  final List<HubItem> items;
+  const HubSection(this.title, this.items);
+}
+
+/// Zen Mode hero, the two Morse tools, then the other tools in sections.
 class ToolsHub extends StatefulWidget {
   /// Opens Zen Mode; [resume] restarts the last mix. Completes on return.
   final Future<void> Function(bool resume) onOpenZen;
 
   /// Morse tools — shown as cards with their [HubItem.glyph].
   final List<HubItem> morse;
-  final List<HubItem> tools;
+
+  /// Grouped lists below the Morse cards (Music, Voice, Sound check…).
+  final List<HubSection> sections;
 
   /// Loads the last Zen mix; defaults to [ZenLastMix.load]. Tests override it.
   final Future<ZenLastMix?> Function()? lastMixLoader;
@@ -91,7 +415,7 @@ class ToolsHub extends StatefulWidget {
     super.key,
     required this.onOpenZen,
     required this.morse,
-    required this.tools,
+    required this.sections,
     this.lastMixLoader,
   });
 
@@ -131,7 +455,8 @@ class _ToolsHubState extends State<ToolsHub> {
           // Phones use the full width; tablets / landscape get a centred column.
           final side = ((box.maxWidth - 600) / 2).clamp(16.0, double.infinity);
           return ListView(
-            padding: EdgeInsets.fromLTRB(side, 0, side, 24),
+            padding: EdgeInsets.fromLTRB(
+                side, 0, side, 24 + MediaQuery.paddingOf(context).bottom),
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 26, 4, 16),
@@ -166,11 +491,13 @@ class _ToolsHubState extends State<ToolsHub> {
                   ],
                 ),
               ),
-              const _ToolsLabel('AUDIO TOOLS'),
-              _ToolList(
-                items: widget.tools,
-                onTap: (item) => _thenReload(item.onOpen),
-              ),
+              for (final section in widget.sections) ...[
+                _ToolsLabel(section.title.toUpperCase()),
+                _ToolList(
+                  items: section.items,
+                  onTap: (item) => _thenReload(item.onOpen),
+                ),
+              ],
             ],
           );
         }),
@@ -541,12 +868,14 @@ class _ToolList extends StatelessWidget {
 class GamesHub extends StatefulWidget {
   final HubItem speedRound;
   final HubItem pairMatch;
+  final HubItem reverseChallenge;
   final List<HubItem> morseGames;
 
   const GamesHub({
     super.key,
     required this.speedRound,
     required this.pairMatch,
+    required this.reverseChallenge,
     required this.morseGames,
   });
 
@@ -557,6 +886,7 @@ class GamesHub extends StatefulWidget {
 class _GamesHubState extends State<GamesHub> {
   String? _speedBest;
   String? _pairBest;
+  String? _reverseBest;
 
   @override
   void initState() {
@@ -581,10 +911,15 @@ class _GamesHubState extends State<GamesHub> {
         break;
       }
     }
+    int? reverse;
+    try {
+      reverse = await ClipRepository.getInt('reverse_best');
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _speedBest = score == null ? null : '$score pts';
       _pairBest = pair;
+      _reverseBest = reverse == null ? null : '$reverse% match';
     });
   }
 
@@ -607,6 +942,8 @@ class _GamesHubState extends State<GamesHub> {
         _GameCard(item: _refreshing(widget.speedRound), best: _speedBest),
         const SizedBox(height: 12),
         _GameCard(item: _refreshing(widget.pairMatch), best: _pairBest),
+        const SizedBox(height: 12),
+        _GameCard(item: _refreshing(widget.reverseChallenge), best: _reverseBest),
         const _HubLabel('MORSE GAMES'),
         _TileGrid(items: widget.morseGames),
       ],
@@ -636,7 +973,8 @@ class _HubScaffold extends StatelessWidget {
             )),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+        padding: EdgeInsets.fromLTRB(
+            16, 4, 16, 24 + MediaQuery.paddingOf(context).bottom),
         children: children,
       ),
     );

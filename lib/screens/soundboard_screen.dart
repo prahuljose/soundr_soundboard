@@ -27,6 +27,11 @@ import '../widgets/sound_button.dart';
 import '../widgets/sound_sheet.dart';
 import 'clip_editor_screen.dart';
 import 'decibel_screen.dart';
+import 'guitar_tuner_screen.dart';
+import 'reverse_challenge_screen.dart';
+import 'speaker_cleaner_screen.dart';
+import 'tone_generator_screen.dart';
+import 'voice_changer_screen.dart';
 import 'metronome_screen.dart';
 import 'spectrum_screen.dart';
 import 'voice_memo_screen.dart';
@@ -1838,15 +1843,19 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     final c = Theme.of(context).extension<AppColors>()!;
     final tab = tabs ? _tab : _tabSounds;
     final soundsBody = _ready
-        ? Stack(
-            children: [
-              _buildBody(),
-              Positioned(
-                right: 16,
-                bottom: 24,
-                child: _buildFabs(),
-              ),
-            ],
+        // Builder: the body's own MediaQuery, whose bottom padding includes
+        // the floating tab bar.
+        ? Builder(
+            builder: (context) => Stack(
+              children: [
+                _buildBody(),
+                Positioned(
+                  right: 16,
+                  bottom: 24 + MediaQuery.paddingOf(context).bottom,
+                  child: _buildFabs(),
+                ),
+              ],
+            ),
           )
         : _buildLoadingScreen();
 
@@ -1888,18 +1897,23 @@ class _SoundboardScreenState extends State<SoundboardScreen>
       },
       child: Scaffold(
         drawer: _ready && !tabs ? _buildDrawer(c) : null,
+        // Pages scroll behind the floating, see-through tab bar.
+        extendBody: _ready && tabs,
         // Other tabs bring their own app bars.
         appBar: tab == _tabSounds ? _buildAppBar() : null,
         body: !_ready || !tabs
             ? soundsBody
-            : IndexedStack(
+            : TabFade(
                 index: tab,
-                children: [
-                  soundsBody,
-                  _buildToolsHub(),
-                  _buildGamesHub(),
-                  const SettingsScreen(),
-                ],
+                child: IndexedStack(
+                  index: tab,
+                  children: [
+                    soundsBody,
+                    _buildToolsHub(),
+                    _buildGamesHub(),
+                    const SettingsScreen(),
+                  ],
+                ),
               ),
         bottomNavigationBar: _ready && tabs
             ? SoundrNavBar(
@@ -1962,42 +1976,76 @@ class _SoundboardScreenState extends State<SoundboardScreen>
           )),
         ),
       ],
-      tools: [
-        HubItem(
-          icon: Icons.graphic_eq_rounded,
-          color: const Color(0xFFFF9F50),
-          title: 'Decibel meter',
-          subtitle: 'How loud is it right now?',
-          onOpen: () => _open(const DecibelScreen()),
-        ),
-        HubItem(
-          icon: Icons.timer_rounded,
-          color: const Color(0xFFFFD166),
-          title: 'Metronome',
-          subtitle: 'Keep time at any tempo',
-          onOpen: () => _open(const MetronomeScreen()),
-        ),
-        HubItem(
-          icon: Icons.equalizer_rounded,
-          color: const Color(0xFFFF9FF0),
-          title: 'Spectrum analyser',
-          subtitle: 'See every frequency, live',
-          onOpen: () => _open(const SpectrumScreen()),
-        ),
-        HubItem(
-          icon: Icons.mic_outlined,
-          color: const Color(0xFF64C8FF),
-          title: 'Voice memo',
-          subtitle: 'Quick recordings, kept on your phone',
-          onOpen: () => _open(const VoiceMemoScreen()),
-        ),
-        HubItem(
-          icon: Icons.hearing_rounded,
-          color: const Color(0xFF9F8FF0),
-          title: 'Hearing check',
-          subtitle: 'Find your hearing age',
-          onOpen: () => _open(const HearingCheckScreen()),
-        ),
+      sections: [
+        HubSection('Music', [
+          HubItem(
+            icon: Icons.music_note_rounded,
+            color: const Color(0xFF7DDB86),
+            title: 'Guitar tuner',
+            subtitle: 'Pluck a string, tune it by ear or eye',
+            onOpen: () => _open(const GuitarTunerScreen()),
+          ),
+          HubItem(
+            icon: Icons.waves_rounded,
+            color: const Color(0xFF4FD1C5),
+            title: 'Tone generator',
+            subtitle: 'Any frequency, plus a pitch pipe',
+            onOpen: () => _open(const ToneGeneratorScreen()),
+          ),
+          HubItem(
+            icon: Icons.timer_rounded,
+            color: const Color(0xFFFFD166),
+            title: 'Metronome',
+            subtitle: 'Keep time at any tempo',
+            onOpen: () => _open(const MetronomeScreen()),
+          ),
+        ]),
+        HubSection('Voice', [
+          HubItem(
+            icon: Icons.record_voice_over_rounded,
+            color: const Color(0xFFFF7FA8),
+            title: 'Voice changer',
+            subtitle: 'Chipmunk, robot, alien and more',
+            onOpen: () => _open(const VoiceChangerScreen()),
+          ),
+          HubItem(
+            icon: Icons.mic_outlined,
+            color: const Color(0xFF64C8FF),
+            title: 'Voice memo',
+            subtitle: 'Quick recordings, kept on your phone',
+            onOpen: () => _open(const VoiceMemoScreen()),
+          ),
+        ]),
+        HubSection('Sound check', [
+          HubItem(
+            icon: Icons.graphic_eq_rounded,
+            color: const Color(0xFFFF9F50),
+            title: 'Decibel meter',
+            subtitle: 'How loud is it right now?',
+            onOpen: () => _open(const DecibelScreen()),
+          ),
+          HubItem(
+            icon: Icons.equalizer_rounded,
+            color: const Color(0xFFFF9FF0),
+            title: 'Spectrum analyser',
+            subtitle: 'See every frequency, live',
+            onOpen: () => _open(const SpectrumScreen()),
+          ),
+          HubItem(
+            icon: Icons.hearing_rounded,
+            color: const Color(0xFF9F8FF0),
+            title: 'Hearing check',
+            subtitle: 'Find your hearing age',
+            onOpen: () => _open(const HearingCheckScreen()),
+          ),
+          HubItem(
+            icon: Icons.water_drop_rounded,
+            color: const Color(0xFF5BB8FF),
+            title: 'Speaker cleaner',
+            subtitle: 'Push out water and dust',
+            onOpen: () => _open(const SpeakerCleanerScreen()),
+          ),
+        ]),
       ],
     );
   }
@@ -2014,6 +2062,13 @@ class _SoundboardScreenState extends State<SoundboardScreen>
           sounds: _allSounds,
           preloaded: _preloaded,
         )),
+      ),
+      reverseChallenge: HubItem(
+        icon: Icons.swap_horiz_rounded,
+        color: const Color(0xFF8FA8FF),
+        title: 'Reverse Challenge',
+        subtitle: 'Copy your voice backwards and see how close you get',
+        onOpen: () => _open(const ReverseChallengeScreen()),
       ),
       pairMatch: HubItem(
         icon: Icons.grid_on_rounded,
@@ -2183,6 +2238,26 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                     // ── Tools ────────────────────────────────────────────────
                     _DrawerSectionLabel('TOOLS'),
                     _DrawerItem(
+                      icon: Icons.music_note_rounded,
+                      label: 'Guitar Tuner',
+                      onTap: () => nav(const GuitarTunerScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.waves_rounded,
+                      label: 'Tone Generator',
+                      onTap: () => nav(const ToneGeneratorScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.record_voice_over_rounded,
+                      label: 'Voice Changer',
+                      onTap: () => nav(const VoiceChangerScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.water_drop_rounded,
+                      label: 'Speaker Cleaner',
+                      onTap: () => nav(const SpeakerCleanerScreen()),
+                    ),
+                    _DrawerItem(
                       icon: Icons.graphic_eq_rounded,
                       label: 'Decibel Meter',
                       onTap: () => nav(const DecibelScreen()),
@@ -2210,6 +2285,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
                     // ── Sound Games ──────────────────────────────────────────
                     _DrawerSectionLabel('SOUND GAMES'),
+                    _DrawerItem(
+                      icon: Icons.swap_horiz_rounded,
+                      label: 'Reverse Challenge',
+                      onTap: () => nav(const ReverseChallengeScreen()),
+                    ),
                     _DrawerItem(
                       icon: Icons.bolt_rounded,
                       label: 'Speed Round',
@@ -2528,7 +2608,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                     builder: (context, density, _) {
                       final gap = density == GridDensity.compact ? 8.0 : 10.0;
                       return GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
+                        padding: EdgeInsets.fromLTRB(
+                            16, 0, 16, 100 + MediaQuery.paddingOf(context).bottom),
                         // Max-extent (not a fixed count) so landscape phones
                         // and tablets get more columns automatically.
                         gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
