@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_soloud/flutter_soloud.dart';
 
+import 'wav.dart';
+
 /// Plays a string's target note so it can be tuned by ear.
 ///
 /// The tone is a soft synthesized pluck: harmonics fading at different
@@ -85,36 +87,5 @@ class ReferenceTone {
   }
 
   /// A 16-bit mono WAV of [samples]. Public for tests.
-  static Uint8List wav(double hz) {
-    final s = samples(hz);
-    final data = s.length * 2;
-    final b = ByteData(44 + data);
-    void str(int o, String v) {
-      for (var i = 0; i < v.length; i++) {
-        b.setUint8(o + i, v.codeUnitAt(i));
-      }
-    }
-
-    str(0, 'RIFF');
-    b.setUint32(4, 36 + data, Endian.little);
-    str(8, 'WAVE');
-    str(12, 'fmt ');
-    b.setUint32(16, 16, Endian.little);
-    b.setUint16(20, 1, Endian.little); // PCM
-    b.setUint16(22, 1, Endian.little); // mono
-    b.setUint32(24, _rate, Endian.little);
-    b.setUint32(28, _rate * 2, Endian.little);
-    b.setUint16(32, 2, Endian.little);
-    b.setUint16(34, 16, Endian.little);
-    str(36, 'data');
-    b.setUint32(40, data, Endian.little);
-    for (var i = 0; i < s.length; i++) {
-      b.setInt16(
-        44 + i * 2,
-        (s[i] * 32767).round().clamp(-32768, 32767),
-        Endian.little,
-      );
-    }
-    return b.buffer.asUint8List();
-  }
+  static Uint8List wav(double hz) => Wav.encode(samples(hz), sampleRate: _rate);
 }
