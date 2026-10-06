@@ -6,19 +6,62 @@ import 'package:flutter_soloud/flutter_soloud.dart';
 
 import '../models/sound_model.dart';
 import '../services/personal_bests.dart';
+import '../services/waveforms.dart';
 import '../theme/app_colors.dart';
 import '../widgets/share_card.dart';
+import '../widgets/speed_round_widgets.dart';
 
 enum _GamePhase { readyUp, playing }
+
+const _tabular = [FontFeature.tabularFigures()];
+
+/// Pre-fills a game in progress (or a finished one) so goldens can render the
+/// in-game layout without audio, timers or the database. Never used by the
+/// app itself.
+@visibleForTesting
+class SpeedRoundDebugSeed {
+  /// Index into the screen's first four sounds, which become the options.
+  final int targetIndex;
+  final int? chosenIndex;
+  final int score;
+  final int streak;
+  final int questionsAnswered;
+  final double timeLeft;
+  final int? scoreGained;
+  final bool gameOver;
+  final int? bestScore;
+  final bool isNewBest;
+
+  /// Stay on the pre-game screen instead of seeding a question.
+  final bool ready;
+
+  const SpeedRoundDebugSeed({
+    this.ready = false,
+    this.targetIndex = 0,
+    this.chosenIndex,
+    this.score = 0,
+    this.streak = 0,
+    this.questionsAnswered = 0,
+    this.timeLeft = 5,
+    this.scoreGained,
+    this.gameOver = false,
+    this.bestScore,
+    this.isNewBest = false,
+  });
+}
 
 class SpeedRoundScreen extends StatefulWidget {
   final List<SoundModel> sounds;
   final Map<String, AudioSource> preloaded;
 
+  @visibleForTesting
+  final SpeedRoundDebugSeed? debugSeed;
+
   const SpeedRoundScreen({
     super.key,
     required this.sounds,
     required this.preloaded,
+    this.debugSeed,
   });
 
   @override
@@ -29,6 +72,7 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
     with SingleTickerProviderStateMixin {
   static const _roundDuration = 5.0;
   static const _minSounds = 8;
+  static const _waveBars = 16;
 
   late final List<SoundModel> _loadedSounds;
   final _rng = Random();
@@ -47,6 +91,7 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
   bool _showScoreGained = false;
   bool _gameOver = false;
   int _maxStreak = 0;
+  List<double> _targetLevels = const [];
 
   // Personal best
   int? _bestScore;
@@ -56,22 +101,51 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
   double _timeLeft = _roundDuration;
   Timer? _countdownTimer;
   late final AnimationController _timerController;
+  late final Animation<double> _remaining;
   SoundHandle? _currentHandle;
 
   @override
   void initState() {
     super.initState();
-    _loadedSounds = widget.sounds
-        .where((s) => widget.preloaded[s.id] != null)
-        .toList();
+    final seed = widget.debugSeed;
+    _loadedSounds = seed != null
+        ? List.of(widget.sounds)
+        : widget.sounds.where((s) => widget.preloaded[s.id] != null).toList();
 
     _timerController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 5),
     );
+    _remaining = ReverseAnimation(_timerController);
+
+    if (seed != null) {
+      _applySeed(seed);
+      return;
+    }
     PersonalBests.speedRoundScore().then((best) {
       if (mounted) setState(() => _bestScore = best);
     });
+  }
+
+  void _applySeed(SpeedRoundDebugSeed seed) {
+    _bestScore = seed.bestScore;
+    if (seed.ready || _loadedSounds.length < 4) return;
+    _gamePhase = _GamePhase.playing;
+    _options = _loadedSounds.take(4).toList();
+    _target = _options[seed.targetIndex];
+    _targetLevels = Waveforms.placeholder(_target!.id, _waveBars);
+    _chosen = seed.chosenIndex == null ? null : _options[seed.chosenIndex!];
+    _answered = seed.chosenIndex != null || seed.gameOver;
+    _score = seed.score;
+    _streak = seed.streak;
+    _maxStreak = seed.streak;
+    _questionsAnswered = seed.questionsAnswered;
+    _timeLeft = seed.timeLeft;
+    _timerController.value = 1 - seed.timeLeft / _roundDuration;
+    _scoreGained = (seed.scoreGained ?? 0).toDouble();
+    _showScoreGained = seed.scoreGained != null;
+    _gameOver = seed.gameOver;
+    _isNewBest = seed.isNewBest;
   }
 
   @override
@@ -118,9 +192,10 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
     _countdownTimer?.cancel();
 
     final shuffled = List<SoundModel>.from(_loadedSounds)..shuffle(_rng);
-    _target = shuffled[0];
+    final target = shuffled[0];
+    _target = target;
     final wrongs = shuffled.sublist(1, 4);
-    final opts = [...wrongs, _target!]..shuffle(_rng);
+    final opts = [...wrongs, target]..shuffle(_rng);
 
     setState(() {
       _options = opts;
@@ -128,7 +203,17 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
       _chosen = null;
       _showScoreGained = false;
       _timeLeft = _roundDuration;
+      _targetLevels =
+          Waveforms.peek(target, bars: _waveBars) ??
+          Waveforms.placeholder(target.id, _waveBars);
     });
+    if (Waveforms.peek(target, bars: _waveBars) == null) {
+      Waveforms.of(target, bars: _waveBars).then((levels) {
+        if (mounted && _target?.id == target.id) {
+          setState(() => _targetLevels = levels);
+        }
+      });
+    }
 
     _timerController
       ..reset()
@@ -137,7 +222,10 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
     Future.microtask(_playTarget);
 
     _countdownTimer = Timer.periodic(const Duration(milliseconds: 100), (t) {
-      if (!mounted) { t.cancel(); return; }
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
       setState(() {
         _timeLeft -= 0.1;
         if (_timeLeft <= 0) {
@@ -177,7 +265,8 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
     showShareCardSheet(
       context,
       fileName: 'soundr-speed-round-$_score',
-      shareText: 'I scored $_score in Soundr’s Speed Round ⚡ '
+      shareText:
+          'I scored $_score in Soundr’s Speed Round ⚡ '
           'Can you beat it?',
       card: ShareCard(
         eyebrow: 'Speed Round',
@@ -224,8 +313,13 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
 
     _streak++;
     _maxStreak = max(_maxStreak, _streak);
-    final multiplier = _streak >= 7 ? 2.0 : _streak >= 3 ? 1.5 : 1.0;
-    final gained = (max(1, (_timeLeft / _roundDuration * 10).round()) * multiplier);
+    final multiplier = _streak >= 7
+        ? 2.0
+        : _streak >= 3
+        ? 1.5
+        : 1.0;
+    final gained =
+        (max(1, (_timeLeft / _roundDuration * 10).round()) * multiplier);
 
     setState(() {
       _answered = true;
@@ -241,7 +335,11 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
     });
   }
 
-  double get _multiplier => _streak >= 7 ? 2.0 : _streak >= 3 ? 1.5 : 1.0;
+  double get _multiplier => _streak >= 7
+      ? 2.0
+      : _streak >= 3
+      ? 1.5
+      : 1.0;
 
   @override
   Widget build(BuildContext context) {
@@ -250,327 +348,349 @@ class _SpeedRoundScreenState extends State<SpeedRoundScreen>
 
     if (_loadedSounds.length < _minSounds) return _buildErrorState(c);
 
+    final playing = _gamePhase == _GamePhase.playing;
     return Scaffold(
       backgroundColor: c.scaffoldBg,
-      appBar: AppBar(
-        backgroundColor: c.surfaceCard,
-        foregroundColor: c.textPrimary,
-        elevation: 0,
-        title: Row(
-          children: [
-            Icon(Icons.bolt_rounded, color: accent, size: 22),
-            const SizedBox(width: 8),
-            Text(
-              'Speed Round',
-              style: TextStyle(
-                color: c.textPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 18,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: SafeArea(
+              child: Column(
+                children: [
+                  _buildHeader(c, showScore: playing),
+                  Expanded(
+                    child: playing
+                        ? _buildGame(c, accent)
+                        : _buildReadyUp(c, accent),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-        actions: [
-          if (_gamePhase == _GamePhase.playing)
-            Container(
-              margin: const EdgeInsets.only(right: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                '$_score pts',
-                style: TextStyle(
-                  color: accent,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 15,
-                ),
+          ),
+          // The result card dims the whole screen, header included; the
+          // system back gesture still leaves the game.
+          if (playing && _gameOver)
+            Positioned.fill(
+              child: _GameOverOverlay(
+                score: _score,
+                questionsAnswered: _questionsAnswered,
+                timedOut: _chosen == null,
+                answerName: _target?.name,
+                bestScore: _bestScore,
+                isNewBest: _isNewBest,
+                accent: accent,
+                colors: c,
+                onShare: _shareScore,
+                onPlayAgain: () => setState(() {
+                  _gamePhase = _GamePhase.readyUp;
+                }),
               ),
             ),
         ],
       ),
-      body: _gamePhase == _GamePhase.readyUp
-          ? _buildReadyUp(c, accent)
-          : Stack(
-              children: [
-                _buildGame(c, accent),
-                if (_gameOver)
-                  _GameOverOverlay(
-                    score: _score,
-                    questionsAnswered: _questionsAnswered,
-                    timedOut: _chosen == null,
-                    answerName: _target?.name,
-                    bestScore: _bestScore,
-                    isNewBest: _isNewBest,
-                    accent: accent,
-                    colors: c,
-                    onShare: _shareScore,
-                    onPlayAgain: () => setState(() {
-                      _gamePhase = _GamePhase.readyUp;
-                    }),
-                  ),
-              ],
-            ),
     );
   }
 
-  Widget _buildReadyUp(AppColors c, Color accent) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 36),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  Widget _buildHeader(AppColors c, {required bool showScore}) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: SizedBox(
+        height: 44,
+        child: Row(
           children: [
-            Container(
-              width: 96,
-              height: 96,
-              decoration: BoxDecoration(
-                color: accent.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-                border: Border.all(color: accent.withValues(alpha: 0.35), width: 2),
-              ),
-              child: const Center(
-                child: Text('👂', style: TextStyle(fontSize: 42)),
-              ),
+            SpeedRoundIconButton(
+              icon: Icons.close_rounded,
+              tooltip: 'Quit game',
+              onTap: () => Navigator.of(context).maybePop(),
             ),
-            const SizedBox(height: 28),
-            Text(
-              'Speed Round',
-              style: TextStyle(
-                color: c.textPrimary,
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'A sound plays — pick the right name from 4 options before time runs out. Answer faster for more points.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: c.textSecondary,
-                fontSize: 14,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '🔥 Build a streak for a score multiplier',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: c.textMuted,
-                fontSize: 13,
-              ),
-            ),
-            if (_bestScore != null) ...[
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
-                ),
-                child: Text(
-                  '🏆  Personal best: $_bestScore pts',
-                  style: TextStyle(
-                    color: c.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 40),
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: FilledButton(
-                onPressed: _startGame,
-                style: FilledButton.styleFrom(
-                  backgroundColor: accent,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: const Text(
-                  "Let's go →",
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGame(AppColors c, Color accent) {
-    if (_target == null) return const SizedBox.shrink();
-    return Column(
-      children: [
-        LinearProgressIndicator(
-          value: _timeLeft / _roundDuration,
-          minHeight: 4,
-          backgroundColor: c.border,
-          valueColor: AlwaysStoppedAnimation(
-            _timeLeft > 2.5 ? accent : Colors.orange,
-          ),
-        ),
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              children: [
-                const SizedBox(height: 36),
-                Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: c.surfaceCard,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: c.border),
-                  ),
-                  child: Column(
-                    children: [
-                      const Text('👂', style: TextStyle(fontSize: 48)),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Listen carefully',
-                        style: TextStyle(
-                          color: c.textSecondary,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      GestureDetector(
-                        onTap: _answered ? null : _playTarget,
-                        child: Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: accent.withValues(alpha: 0.12),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.replay_rounded,
-                            color: _answered ? c.textMuted : accent,
-                            size: 22,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: _showScoreGained
-                      ? Container(
-                          key: const ValueKey('score'),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            '+${_scoreGained.round()} pts',
-                            style: const TextStyle(
-                              color: Colors.green,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 14,
-                            ),
-                          ),
-                        )
-                      : Container(
-                          key: const ValueKey('streak'),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: _streak > 0
-                                ? accent.withValues(alpha: 0.12)
-                                : c.surfaceCard,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                                color: _streak > 0 ? accent : c.border),
-                          ),
-                          child: Text(
-                            _streak == 0
-                                ? 'No streak'
-                                : '🔥 $_streak streak · $_multiplier×',
-                            style: TextStyle(
-                              color: _streak > 0 ? accent : c.textMuted,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                ),
-                const SizedBox(height: 20),
-                GridView.count(
-                  crossAxisCount: 2,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                  childAspectRatio: 1.3,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  children: _options
-                      .map((opt) => _OptionCard(
-                            sound: opt,
-                            isTarget: opt.id == _target!.id,
-                            isChosen: _chosen?.id == opt.id,
-                            answered: _answered,
-                            accent: accent,
-                            colors: c,
-                            onTap: () => _onOptionTap(opt),
-                          ))
-                      .toList(),
-                ),
-                const SizedBox(height: 24),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildErrorState(AppColors c) {
-    return Scaffold(
-      backgroundColor: c.scaffoldBg,
-      appBar: AppBar(
-        backgroundColor: c.surfaceCard,
-        foregroundColor: c.textPrimary,
-        title: const Text('Speed Round'),
-      ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.warning_amber_rounded, size: 56, color: c.textMuted),
-              const SizedBox(height: 16),
-              Text(
-                'Not enough sounds loaded',
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Speed Round',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: c.textPrimary,
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Speed Round needs at least $_minSounds loaded sounds.\n'
-                'Only ${_loadedSounds.length} are available.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: c.textSecondary, fontSize: 14),
-              ),
-            ],
+            ),
+            if (showScore) SpeedRoundScorePill(score: _score),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBestRow(AppColors c) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.emoji_events_outlined,
+          size: 17,
+          color: speedRoundGold(context),
+        ),
+        const SizedBox(width: 7),
+        Text(
+          'Personal best',
+          style: TextStyle(color: c.textSecondary, fontSize: 13),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          _bestScore == null ? '—' : '$_bestScore',
+          style: TextStyle(
+            color: c.textPrimary,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            fontFeatures: _tabular,
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReadyUp(AppColors c, Color accent) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
+              decoration: BoxDecoration(
+                color: c.surfaceCard,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: c.border),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: accent.withValues(alpha: 0.35),
+                        width: 2,
+                      ),
+                    ),
+                    child: Icon(Icons.bolt_rounded, color: accent, size: 48),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Name that sound',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: c.textPrimary,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'A sound plays — pick the right name from 4 options '
+                    'before time runs out. Answer faster for more points.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: c.textSecondary,
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  const SpeedRoundStreakPill(
+                    streak: 0,
+                    multiplier: 2,
+                    label: 'Build a streak for up to 2× points',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            _buildBestRow(c),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: FilledButton(
+                onPressed: _startGame,
+                style: FilledButton.styleFrom(
+                  backgroundColor: accent,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                ),
+                child: const Text(
+                  "Let's go →",
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStreakSlot() {
+    final showStreak = _streak >= 2;
+    final gain = _showScoreGained
+        ? SpeedRoundGainChip(
+            key: ValueKey('gain$_questionsAnswered'),
+            gained: _scoreGained.round(),
+          )
+        : const SizedBox.shrink(key: ValueKey('nogain'));
+    return SizedBox(
+      height: 34,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: showStreak
+                ? SpeedRoundStreakPill(
+                    key: const ValueKey('streak'),
+                    streak: _streak,
+                    multiplier: _multiplier,
+                  )
+                : const SizedBox.shrink(key: ValueKey('nostreak')),
+          ),
+          if (showStreak && _showScoreGained) const SizedBox(width: 8),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: gain,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGame(AppColors c, Color accent) {
+    if (_target == null) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, box) {
+        // Everything except the ring is fixed height; the ring shrinks on
+        // short screens (down to 180) before the column starts to scroll.
+        const fixed = 22 + 34 + 22 + 22 + 20 + 12 + 76 * 2 + 10 + 20 + 20 + 24;
+        final ring = (box.maxHeight - fixed).clamp(180.0, 250.0);
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: box.maxHeight),
+            child: IntrinsicHeight(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 22),
+                    _buildStreakSlot(),
+                    const SizedBox(height: 22),
+                    SpeedRoundRing(
+                      size: ring,
+                      remaining: _remaining,
+                      secondsLeft: _timeLeft,
+                      levels: _targetLevels,
+                      enabled: !_answered,
+                      onReplay: _playTarget,
+                    ),
+                    const SizedBox(height: 22),
+                    Text(
+                      'Which sound is this?',
+                      style: TextStyle(color: c.textSecondary, fontSize: 15),
+                    ),
+                    const SizedBox(height: 12),
+                    for (var row = 0; row < 2; row++) ...[
+                      if (row > 0) const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          for (var col = 0; col < 2; col++) ...[
+                            if (col > 0) const SizedBox(width: 10),
+                            Expanded(child: _option(_options[row * 2 + col])),
+                          ],
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    const Spacer(),
+                    _buildBestRow(c),
+                    const SizedBox(height: 24),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _option(SoundModel opt) => SpeedRoundOption(
+    sound: opt,
+    isTarget: opt.id == _target!.id,
+    isChosen: _chosen?.id == opt.id,
+    answered: _answered,
+    onTap: () => _onOptionTap(opt),
+  );
+
+  Widget _buildErrorState(AppColors c) {
+    return Scaffold(
+      backgroundColor: c.scaffoldBg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(c, showScore: false),
+            Expanded(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Container(
+                    padding: const EdgeInsets.all(28),
+                    decoration: BoxDecoration(
+                      color: c.surfaceCard,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: c.border),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          size: 48,
+                          color: c.iconSecondary,
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          'Not enough sounds loaded',
+                          style: TextStyle(
+                            color: c.textPrimary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Speed Round needs at least $_minSounds loaded sounds. '
+                          'Only ${_loadedSounds.length} are available.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: c.textSecondary,
+                            fontSize: 14,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -604,116 +724,183 @@ class _GameOverOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final red = speedRoundWrong(context);
+    final gold = speedRoundGold(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      color: Colors.black.withValues(alpha: 0.65),
-      child: Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 32),
-          padding: const EdgeInsets.all(32),
-          decoration: BoxDecoration(
-            color: colors.surfaceCard,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: Colors.redAccent.withValues(alpha: 0.4), width: 2),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(timedOut ? '⏰' : '❌', style: const TextStyle(fontSize: 48)),
-              const SizedBox(height: 12),
-              Text(
-                timedOut ? 'Time\'s up!' : 'Wrong answer!',
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                answerName == null
-                    ? 'You ran out of time.'
-                    : timedOut
-                        ? 'Out of time — it was “$answerName”.'
-                        : 'It was “$answerName”.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: colors.textSecondary, fontSize: 14),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _StatChip(label: 'Score', value: '$score pts', accent: accent, colors: colors),
-                  _StatChip(label: 'Correct', value: '$questionsAnswered', accent: accent, colors: colors),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (isNewBest)
+      color: Colors.black.withValues(alpha: dark ? 0.65 : 0.4),
+      alignment: Alignment.center,
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 400),
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+            decoration: BoxDecoration(
+              color: colors.surfaceCard,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: colors.border),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  width: 64,
+                  height: 64,
                   decoration: BoxDecoration(
-                    color: Colors.amber.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.amber.withValues(alpha: 0.5)),
+                    color: red.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: red.withValues(alpha: 0.4)),
                   ),
-                  child: Text(
-                    '🏆  New personal best!',
-                    style: TextStyle(
-                      color: colors.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  child: Icon(
+                    timedOut ? Icons.timer_off_rounded : Icons.close_rounded,
+                    color: red,
+                    size: 30,
                   ),
-                )
-              else if (bestScore != null)
+                ),
+                const SizedBox(height: 14),
                 Text(
-                  'Personal best: $bestScore pts',
-                  style: TextStyle(color: colors.textMuted, fontSize: 13),
-                ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: onPlayAgain,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: accent,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: const Text(
-                    'Try Again',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16,
-                      color: Colors.white,
-                    ),
+                  timedOut ? 'Time\'s up!' : 'Wrong answer!',
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-              ),
-              if (score > 0) ...[
-                const SizedBox(height: 10),
+                const SizedBox(height: 6),
+                Text(
+                  answerName == null
+                      ? 'You ran out of time.'
+                      : timedOut
+                      ? 'Out of time — it was “$answerName”.'
+                      : 'It was “$answerName”.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _StatChip(
+                        label: 'Score',
+                        value: '$score',
+                        unit: 'pts',
+                        accent: accent,
+                        colors: colors,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _StatChip(
+                        label: 'Correct',
+                        value: '$questionsAnswered',
+                        accent: accent,
+                        colors: colors,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (isNewBest)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 7,
+                    ),
+                    decoration: BoxDecoration(
+                      color: gold.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: gold.withValues(alpha: 0.5)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.emoji_events_rounded, size: 16, color: gold),
+                        const SizedBox(width: 6),
+                        Text(
+                          'New personal best!',
+                          style: TextStyle(
+                            color: colors.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                else if (bestScore != null)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.emoji_events_outlined, size: 16, color: gold),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Personal best ',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
+                      Text(
+                        '$bestScore',
+                        style: TextStyle(
+                          color: colors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: _tabular,
+                        ),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 22),
                 SizedBox(
                   width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: onShare,
-                    icon: const Icon(Icons.ios_share_rounded, size: 18),
-                    label: const Text(
-                      'Share score',
-                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: accent,
-                      side: BorderSide(color: accent.withValues(alpha: 0.5)),
-                      padding: const EdgeInsets.symmetric(vertical: 13),
+                  height: 52,
+                  child: FilledButton(
+                    onPressed: onPlayAgain,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: accent,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                    ),
+                    child: const Text(
+                      'Try Again',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 16,
                       ),
                     ),
                   ),
                 ),
+                if (score > 0) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: OutlinedButton.icon(
+                      onPressed: onShare,
+                      icon: const Icon(Icons.ios_share_rounded, size: 18),
+                      label: const Text(
+                        'Share score',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: colors.textPrimary,
+                        side: BorderSide(color: colors.border),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -724,101 +911,60 @@ class _GameOverOverlay extends StatelessWidget {
 class _StatChip extends StatelessWidget {
   final String label;
   final String value;
+  final String? unit;
   final Color accent;
   final AppColors colors;
 
   const _StatChip({
     required this.label,
     required this.value,
+    this.unit,
     required this.accent,
     required this.colors,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: TextStyle(
-            color: accent,
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(label, style: TextStyle(color: colors.textSecondary, fontSize: 13)),
-      ],
-    );
-  }
-}
-
-class _OptionCard extends StatelessWidget {
-  final SoundModel sound;
-  final bool isTarget;
-  final bool isChosen;
-  final bool answered;
-  final Color accent;
-  final AppColors colors;
-  final VoidCallback onTap;
-
-  const _OptionCard({
-    required this.sound,
-    required this.isTarget,
-    required this.isChosen,
-    required this.answered,
-    required this.accent,
-    required this.colors,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    Color borderColor = colors.border;
-    Color bgColor = colors.surfaceCard;
-
-    if (answered) {
-      if (isTarget) {
-        borderColor = Colors.green;
-        bgColor = Colors.green.withValues(alpha: 0.10);
-      } else if (isChosen && !isTarget) {
-        borderColor = Colors.red;
-        bgColor = Colors.red.withValues(alpha: 0.10);
-      }
-    }
-
-    return GestureDetector(
-      onTap: answered ? null : onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-              color: borderColor,
-              width: answered && (isTarget || isChosen) ? 2 : 1),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(sound.emoji, style: const TextStyle(fontSize: 28)),
-            const SizedBox(height: 6),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Text(
-                sound.name,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: colors.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      decoration: BoxDecoration(
+        color: colors.scaffoldBg,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colors.borderSubtle),
+      ),
+      child: Column(
+        children: [
+          Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: value,
+                  style: TextStyle(
+                    color: colors.textPrimary,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: _tabular,
+                  ),
                 ),
-              ),
+                if (unit != null)
+                  TextSpan(
+                    text: ' $unit',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+              ],
             ),
-          ],
-        ),
+            maxLines: 1,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(color: colors.textSecondary, fontSize: 13),
+          ),
+        ],
       ),
     );
   }

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget header logo: five waveform bars, accent with a white middle bar. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="23dp"
+    android:height="14dp"
+    android:viewportWidth="23"
+    android:viewportHeight="14">
+    <path
+        android:fillColor="#FFB7A4FF"
+        android:pathData="M1.5,4a1.5,1.5 0,0 1,1.5,1.5v3a1.5,1.5 0,0 1,-3,0v-3a1.5,1.5 0,0 1,1.5,-1.5zM6.5,1.5a1.5,1.5 0,0 1,1.5,1.5v8a1.5,1.5 0,0 1,-3,0v-8a1.5,1.5 0,0 1,1.5,-1.5zM16.5,1.5a1.5,1.5 0,0 1,1.5,1.5v8a1.5,1.5 0,0 1,-3,0v-8a1.5,1.5 0,0 1,1.5,-1.5zM21.5,4a1.5,1.5 0,0 1,1.5,1.5v3a1.5,1.5 0,0 1,-3,0v-3a1.5,1.5 0,0 1,1.5,-1.5z" />
+    <path
+        android:fillColor="#FFF4F1FF"
+        android:pathData="M11.5,0a1.5,1.5 0,0 1,1.5,1.5v11a1.5,1.5 0,0 1,-3,0v-11a1.5,1.5 0,0 1,1.5,-1.5z" />
+</vector>

@@ -1,14 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Soundr home-screen widget. Generated slot layout: 2 rows x 4 buttons.
-     The second row is hidden unless the widget is at least two rows tall.
-     Default texts are the picker preview (see quick_sounds_widget_info.xml). -->
+<!-- Soundr home-screen widget (artboard 15): header (logo, name, Stop) over
+     a 4-column grid of up to 2 rows. QuickSoundsWidget.kt hides the header
+     and/or second row when the widget is too short, and swaps each wave_N
+     for a bitmap drawn in the sound's colour. Default texts, waves and the
+     "playing" second tile are the picker preview (quick_sounds_widget_info.xml).
+     RemoteViews-safe views only: LinearLayout, ImageView, TextView. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@drawable/widget_bg"
     android:orientation="vertical"
-    android:padding="5dp">
+    android:padding="3dp">
+
+    <LinearLayout
+        android:id="@+id/widget_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="13dp"
+        android:paddingTop="11dp"
+        android:paddingEnd="13dp"
+        android:paddingBottom="3dp">
+
+        <LinearLayout
+            android:id="@+id/widget_brand"
+            android:layout_width="0dp"
+            android:layout_height="32dp"
+            android:layout_weight="1"
+            android:contentDescription="@string/widget_open_app"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="23dp"
+                android:layout_height="14dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/widget_logo" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:fontFamily="sans-serif"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:text="@string/widget_title"
+                android:textColor="#FFF4F1FF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <ImageView
+            android:id="@+id/widget_stop"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/widget_stop_bg"
+            android:contentDescription="@string/widget_stop"
+            android:scaleType="center"
+            android:src="@drawable/widget_ic_stop" />
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/row_top"
@@ -29,25 +81,26 @@
             android:paddingStart="4dp"
             android:paddingEnd="4dp">
 
-            <TextView
-                android:id="@+id/emoji_0"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:text="🔥"
-                android:textSize="22sp" />
+            <ImageView
+                android:id="@+id/wave_0"
+                android:layout_width="33dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_preview_wave_0" />
 
             <TextView
                 android:id="@+id/name_0"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Yeah Boy"
-                android:textColor="#E6FFFFFF"
+                android:textColor="#FFF4F1FF"
                 android:textSize="11sp" />
         </LinearLayout>
         <LinearLayout
@@ -56,31 +109,32 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:layout_margin="3dp"
-            android:background="@drawable/widget_tile"
+            android:background="@drawable/widget_tile_playing"
             android:gravity="center"
             android:orientation="vertical"
             android:paddingStart="4dp"
             android:paddingEnd="4dp">
 
-            <TextView
-                android:id="@+id/emoji_1"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:text="💔"
-                android:textSize="22sp" />
+            <ImageView
+                android:id="@+id/wave_1"
+                android:layout_width="33dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_preview_wave_1" />
 
             <TextView
                 android:id="@+id/name_1"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Emotional Damage"
-                android:textColor="#E6FFFFFF"
+                android:textColor="#FFF4F1FF"
                 android:textSize="11sp" />
         </LinearLayout>
         <LinearLayout
@@ -95,25 +149,26 @@
             android:paddingStart="4dp"
             android:paddingEnd="4dp">
 
-            <TextView
-                android:id="@+id/emoji_2"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:text="🔨"
-                android:textSize="22sp" />
+            <ImageView
+                android:id="@+id/wave_2"
+                android:layout_width="33dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_preview_wave_2" />
 
             <TextView
                 android:id="@+id/name_2"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Bonk"
-                android:textColor="#E6FFFFFF"
+                android:textColor="#FFF4F1FF"
                 android:textSize="11sp" />
         </LinearLayout>
         <LinearLayout
@@ -128,25 +183,26 @@
             android:paddingStart="4dp"
             android:paddingEnd="4dp">
 
-            <TextView
-                android:id="@+id/emoji_3"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:text="😎"
-                android:textSize="22sp" />
+            <ImageView
+                android:id="@+id/wave_3"
+                android:layout_width="33dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_preview_wave_3" />
 
             <TextView
                 android:id="@+id/name_3"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Rizz"
-                android:textColor="#E6FFFFFF"
+                android:textColor="#FFF4F1FF"
                 android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
@@ -156,8 +212,7 @@
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:orientation="horizontal"
-        android:visibility="gone">
+        android:orientation="horizontal">
 
         <LinearLayout
             android:id="@+id/slot_4"
@@ -171,25 +226,26 @@
             android:paddingStart="4dp"
             android:paddingEnd="4dp">
 
-            <TextView
-                android:id="@+id/emoji_4"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:text="🎉"
-                android:textSize="22sp" />
+            <ImageView
+                android:id="@+id/wave_4"
+                android:layout_width="33dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_preview_wave_4" />
 
             <TextView
                 android:id="@+id/name_4"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Yippee"
-                android:textColor="#E6FFFFFF"
+                android:textColor="#FFF4F1FF"
                 android:textSize="11sp" />
         </LinearLayout>
         <LinearLayout
@@ -204,25 +260,26 @@
             android:paddingStart="4dp"
             android:paddingEnd="4dp">
 
-            <TextView
-                android:id="@+id/emoji_5"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:text="🤨"
-                android:textSize="22sp" />
+            <ImageView
+                android:id="@+id/wave_5"
+                android:layout_width="33dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_preview_wave_5" />
 
             <TextView
                 android:id="@+id/name_5"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Erm What The Sigma"
-                android:textColor="#E6FFFFFF"
+                android:textColor="#FFF4F1FF"
                 android:textSize="11sp" />
         </LinearLayout>
         <LinearLayout
@@ -237,25 +294,26 @@
             android:paddingStart="4dp"
             android:paddingEnd="4dp">
 
-            <TextView
-                android:id="@+id/emoji_6"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:text="🚗"
-                android:textSize="22sp" />
+            <ImageView
+                android:id="@+id/wave_6"
+                android:layout_width="33dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_preview_wave_6" />
 
             <TextView
                 android:id="@+id/name_6"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Goofy Car Horn"
-                android:textColor="#E6FFFFFF"
+                android:textColor="#FFF4F1FF"
                 android:textSize="11sp" />
         </LinearLayout>
         <LinearLayout
@@ -270,25 +328,26 @@
             android:paddingStart="4dp"
             android:paddingEnd="4dp">
 
-            <TextView
-                android:id="@+id/emoji_7"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:includeFontPadding="false"
-                android:text="😩"
-                android:textSize="22sp" />
+            <ImageView
+                android:id="@+id/wave_7"
+                android:layout_width="33dp"
+                android:layout_height="22dp"
+                android:importantForAccessibility="no"
+                android:scaleType="fitCenter"
+                android:src="@drawable/widget_preview_wave_7" />
 
             <TextView
                 android:id="@+id/name_7"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="3dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:fontFamily="sans-serif-medium"
                 android:gravity="center"
+                android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="Augh"
-                android:textColor="#E6FFFFFF"
+                android:textColor="#FFF4F1FF"
                 android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
@@ -296,11 +355,12 @@
     <TextView
         android:id="@+id/widget_empty"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
         android:gravity="center"
-        android:padding="8dp"
+        android:padding="12dp"
         android:text="@string/widget_empty"
-        android:textColor="#CCFFFFFF"
+        android:textColor="#B3F4F1FF"
         android:textSize="13sp"
         android:visibility="gone" />
 </LinearLayout>
