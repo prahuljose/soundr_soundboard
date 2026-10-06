@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/clip_repository.dart';
 import '../services/personal_bests.dart';
 import '../services/zen_last_mix.dart';
 import '../theme/app_colors.dart';
@@ -75,14 +76,23 @@ class SoundrNavBar extends StatelessWidget {
 
 // ── Tools tab ────────────────────────────────────────────────────────────────
 
-/// Zen Mode hero, the two Morse tools and a list of audio tools.
+/// A labelled group of tools on the Tools tab.
+class HubSection {
+  final String title;
+  final List<HubItem> items;
+  const HubSection(this.title, this.items);
+}
+
+/// Zen Mode hero, the two Morse tools, then the other tools in sections.
 class ToolsHub extends StatefulWidget {
   /// Opens Zen Mode; [resume] restarts the last mix. Completes on return.
   final Future<void> Function(bool resume) onOpenZen;
 
   /// Morse tools — shown as cards with their [HubItem.glyph].
   final List<HubItem> morse;
-  final List<HubItem> tools;
+
+  /// Grouped lists below the Morse cards (Music, Voice, Sound check…).
+  final List<HubSection> sections;
 
   /// Loads the last Zen mix; defaults to [ZenLastMix.load]. Tests override it.
   final Future<ZenLastMix?> Function()? lastMixLoader;
@@ -91,7 +101,7 @@ class ToolsHub extends StatefulWidget {
     super.key,
     required this.onOpenZen,
     required this.morse,
-    required this.tools,
+    required this.sections,
     this.lastMixLoader,
   });
 
@@ -166,11 +176,13 @@ class _ToolsHubState extends State<ToolsHub> {
                   ],
                 ),
               ),
-              const _ToolsLabel('AUDIO TOOLS'),
-              _ToolList(
-                items: widget.tools,
-                onTap: (item) => _thenReload(item.onOpen),
-              ),
+              for (final section in widget.sections) ...[
+                _ToolsLabel(section.title.toUpperCase()),
+                _ToolList(
+                  items: section.items,
+                  onTap: (item) => _thenReload(item.onOpen),
+                ),
+              ],
             ],
           );
         }),
@@ -541,12 +553,14 @@ class _ToolList extends StatelessWidget {
 class GamesHub extends StatefulWidget {
   final HubItem speedRound;
   final HubItem pairMatch;
+  final HubItem reverseChallenge;
   final List<HubItem> morseGames;
 
   const GamesHub({
     super.key,
     required this.speedRound,
     required this.pairMatch,
+    required this.reverseChallenge,
     required this.morseGames,
   });
 
@@ -557,6 +571,7 @@ class GamesHub extends StatefulWidget {
 class _GamesHubState extends State<GamesHub> {
   String? _speedBest;
   String? _pairBest;
+  String? _reverseBest;
 
   @override
   void initState() {
@@ -581,10 +596,15 @@ class _GamesHubState extends State<GamesHub> {
         break;
       }
     }
+    int? reverse;
+    try {
+      reverse = await ClipRepository.getInt('reverse_best');
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       _speedBest = score == null ? null : '$score pts';
       _pairBest = pair;
+      _reverseBest = reverse == null ? null : '$reverse% match';
     });
   }
 
@@ -607,6 +627,8 @@ class _GamesHubState extends State<GamesHub> {
         _GameCard(item: _refreshing(widget.speedRound), best: _speedBest),
         const SizedBox(height: 12),
         _GameCard(item: _refreshing(widget.pairMatch), best: _pairBest),
+        const SizedBox(height: 12),
+        _GameCard(item: _refreshing(widget.reverseChallenge), best: _reverseBest),
         const _HubLabel('MORSE GAMES'),
         _TileGrid(items: widget.morseGames),
       ],
