@@ -22,6 +22,16 @@ class ClipPlayer {
 
   bool get isPlaying => playing.value != null;
 
+  /// False when the native engine isn't loaded at all (widget tests), where
+  /// even asking throws.
+  static bool get _ready {
+    try {
+      return SoLoud.instance.isInitialized;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Plays [samples]; [tag] identifies it (e.g. 'original' / 'attempt').
   Future<void> play(Float64List samples, {Object tag = true, int sampleRate = 44100}) async {
     await stop();
@@ -30,8 +40,8 @@ class ClipPlayer {
     if (total == Duration.zero) return;
     playing.value = tag;
     progress.value = 0;
-    final sl = SoLoud.instance;
-    if (sl.isInitialized) {
+    if (_ready) {
+      final sl = SoLoud.instance;
       try {
         final src = await sl.loadMem('clip_${identityHashCode(samples)}_$gen.wav',
             Wav.encode(samples, sampleRate: sampleRate));
@@ -61,11 +71,11 @@ class ClipPlayer {
     _ticker = null;
     progress.value = null;
     playing.value = null;
-    final sl = SoLoud.instance;
     final h = _handle, s = _source;
     _handle = null;
     _source = null;
-    if (!sl.isInitialized) return;
+    if (!_ready) return;
+    final sl = SoLoud.instance;
     try {
       if (h != null) await sl.stop(h);
       if (s != null) await sl.disposeSource(s);

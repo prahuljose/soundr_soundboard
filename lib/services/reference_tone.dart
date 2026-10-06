@@ -24,8 +24,8 @@ class ReferenceTone {
   static Future<void> play(double hz) async {
     stop();
     final sl = SoLoud.instance;
-    if (!sl.isInitialized) return;
     try {
+      if (!sl.isInitialized) return;
       final key = hz.toStringAsFixed(3);
       final src = _sources[key] ??= await sl.loadMem(
         'tuner_ref_$key.wav',
