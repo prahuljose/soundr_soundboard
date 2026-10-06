@@ -15,7 +15,7 @@ import '../services/wav.dart';
 import '../theme/app_colors.dart';
 import '../widgets/permission_denied_card.dart';
 import '../widgets/reverse_challenge_widgets.dart';
-import '../widgets/share_card.dart' show soundrPlayStoreUrl;
+import '../widgets/share_card.dart';
 import 'clip_editor_screen.dart';
 
 const _kRate = MicClipRecorder.sampleRate;
@@ -389,23 +389,40 @@ class _ReverseChallengeScreenState extends State<ReverseChallengeScreen>
     }
   }
 
+  /// Share a score card; the reversed attempt can go along with it.
   Future<void> _share() async {
     Haptics.light();
     _autoPlay?.cancel();
     await _player.stop();
-    final path = await _writeAttempt();
-    if (path == null) return;
-    try {
-      await Share.shareXFiles(
-        [XFile(path, mimeType: 'audio/wav')],
-        text:
-            'I said it backwards, then flipped it — ${_score ?? 0}/100 in '
-            'Soundr’s Reverse Challenge. Can you tell what I said?\n'
-            '$soundrPlayStoreUrl',
-      );
-    } catch (_) {
-      _snack('Couldn’t share the clip — try again');
-    }
+    if (!mounted) return;
+    final score = _score ?? 0;
+    final stars = ReverseScore.stars(score);
+    await showShareCardSheet(
+      context,
+      fileName: 'soundr-reverse-challenge-$score',
+      shareText: 'I said “${reversePhrases[_phrase]}” backwards and scored '
+          '$score/100 in Soundr’s Reverse Challenge 🔁 Can you beat it?',
+      card: ShareCard(
+        eyebrow: 'Reverse Challenge',
+        emoji: '🔁',
+        value: '$score',
+        unit: 'out of 100 · ${ReverseScore.message(score)}',
+        badge: _newBest ? '🏆  New personal best' : null,
+        stats: [
+          '⭐' * stars,
+          '“${reversePhrases[_phrase]}”',
+        ],
+        tagline: 'Can you say it\nbackwards?',
+      ),
+      attachment: ShareAttachment(
+        label: 'Include my clip',
+        icon: Icons.graphic_eq_rounded,
+        create: () async {
+          final path = await _writeAttempt();
+          return path == null ? null : XFile(path, mimeType: 'audio/wav');
+        },
+      ),
+    );
   }
 
   Future<void> _addToSoundboard() async {
