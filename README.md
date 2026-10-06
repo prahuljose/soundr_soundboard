@@ -11,7 +11,7 @@
 ![Flutter](https://img.shields.io/badge/Flutter-3.41-02569B?style=flat-square&logo=flutter&logoColor=white)
 ![Dart](https://img.shields.io/badge/Dart-3.11-0175C2?style=flat-square&logo=dart&logoColor=white)
 ![Android](https://img.shields.io/badge/Android-app-3DDC84?style=flat-square&logo=android&logoColor=white)
-![Version](https://img.shields.io/badge/version-1.1.0-a78bfa?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.2.0-a78bfa?style=flat-square)
 ![Offline](https://img.shields.io/badge/internet_permission-none-1a1040?style=flat-square)
 ![Ads](https://img.shields.io/badge/ads-0-1a1040?style=flat-square)
 ![Trackers](https://img.shields.io/badge/trackers-0-1a1040?style=flat-square)
