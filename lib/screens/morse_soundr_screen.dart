@@ -258,7 +258,24 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
           ),
         ),
       ),
-      body: Column(
+      // Fills the screen normally; scrolls instead of overflowing when the
+      // keyboard leaves too little room for the controls underneath.
+      body: LayoutBuilder(
+        builder: (context, box) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: box.maxHeight),
+            child: IntrinsicHeight(
+              child: _buildBody(c, accent, text, currentChar, currentMorse),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody(AppColors c, Color accent, String text,
+      String? currentChar, String? currentMorse) {
+    return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // ── Input row ──────────────────────────────────────────────────────
@@ -660,7 +677,6 @@ class _MorseSoundrScreenState extends State<MorseSoundrScreen> {
             ),
           ),
         ],
-      ),
     );
   }
 }
