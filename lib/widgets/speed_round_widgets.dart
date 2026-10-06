@@ -479,12 +479,26 @@ class SpeedRoundOption extends StatelessWidget {
               padding: EdgeInsets.symmetric(horizontal: 15 - width),
               child: Row(
                 children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: speedRoundSoundColor(context, sound),
-                      shape: BoxShape.circle,
+                  // The sound's emoji on its category colour — the same
+                  // pairing as its soundboard button.
+                  ExcludeSemantics(
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: speedRoundSoundColor(context, sound)
+                            .withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: speedRoundSoundColor(context, sound)
+                              .withValues(alpha: 0.4),
+                        ),
+                      ),
+                      child: Text(
+                        sound.emoji,
+                        style: const TextStyle(fontSize: 20, height: 1),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
