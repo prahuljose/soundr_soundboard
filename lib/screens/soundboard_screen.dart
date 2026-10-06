@@ -1903,14 +1903,17 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         appBar: tab == _tabSounds ? _buildAppBar() : null,
         body: !_ready || !tabs
             ? soundsBody
-            : IndexedStack(
+            : TabFade(
                 index: tab,
-                children: [
-                  soundsBody,
-                  _buildToolsHub(),
-                  _buildGamesHub(),
-                  const SettingsScreen(),
-                ],
+                child: IndexedStack(
+                  index: tab,
+                  children: [
+                    soundsBody,
+                    _buildToolsHub(),
+                    _buildGamesHub(),
+                    const SettingsScreen(),
+                  ],
+                ),
               ),
         bottomNavigationBar: _ready && tabs
             ? SoundrNavBar(

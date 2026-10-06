@@ -1,4 +1,5 @@
-import 'dart:ui' show ImageFilter;
+import 'dart:math' show max, min, pi, sin;
+import 'dart:ui' show ImageFilter, lerpDouble;
 
 import 'package:flutter/material.dart';
 
@@ -105,22 +106,10 @@ class SoundrNavBar extends StatelessWidget {
                             : Colors.white.withValues(alpha: 0.7),
                       ),
                     ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        for (var i = 0; i < _items.length; i++)
-                          Expanded(
-                            // The selected tab grows to fit its label.
-                            flex: i == selectedIndex ? 15 : 10,
-                            child: _NavItem(
-                              icon: _items[i].$1,
-                              selectedIcon: _items[i].$2,
-                              label: _items[i].$3,
-                              selected: i == selectedIndex,
-                              onTap: () => onSelected(i),
-                            ),
-                          ),
-                      ],
+                    child: _NavTrack(
+                      items: _items,
+                      selected: selectedIndex,
+                      onSelected: onSelected,
                     ),
                   ),
                 ),
@@ -133,28 +122,169 @@ class SoundrNavBar extends StatelessWidget {
   }
 }
 
-class _NavItem extends StatelessWidget {
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
+/// The tabs and the sliding highlight. One animation runs from the tab
+/// being left to the tab picked: the pill slides (stretching a little
+/// mid-flight), the old tab's label folds away as the new one's unfolds,
+/// and the widths flow between them. Tabs in between stay put.
+class _NavTrack extends StatefulWidget {
+  final List<(IconData, IconData, String)> items;
+  final int selected;
+  final ValueChanged<int> onSelected;
 
-  const _NavItem({
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
+  const _NavTrack({
+    required this.items,
     required this.selected,
-    required this.onTap,
+    required this.onSelected,
   });
 
-  static const _duration = Duration(milliseconds: 260);
+  @override
+  State<_NavTrack> createState() => _NavTrackState();
+}
+
+class _NavTrackState extends State<_NavTrack>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+    value: 1,
+  );
+  late final Animation<double> _p =
+      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+  late int _from = widget.selected;
+
+  @override
+  void didUpdateWidget(_NavTrack old) {
+    super.didUpdateWidget(old);
+    if (old.selected != widget.selected) {
+      _from = old.selected;
+      _c.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
     final accent = Theme.of(context).colorScheme.primary;
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final items = widget.items;
+    final n = items.length;
+    final to = widget.selected;
+    final labelStyle = TextStyle(
+      color: c.textPrimary,
+      fontSize: 13.5,
+      fontWeight: FontWeight.w700,
+    );
+    final scaler = MediaQuery.textScalerOf(context);
+
+    return AnimatedBuilder(
+      animation: _p,
+      builder: (context, _) => LayoutBuilder(builder: (context, box) {
+        final p = _p.value;
+        // 0..1: how selected each tab is at this instant.
+        double amount(int i) => i == to
+            ? (_from == to ? 1 : p)
+            : i == _from
+                ? 1 - p
+                : 0;
+
+        // Room a tab needs on top of its icon to show its label, measured
+        // so it never clips; capped so the other icons keep ~44 px.
+        final maxExtra = max(0.0, box.maxWidth - n * 44.0);
+        double extra(int i) {
+          final tp = TextPainter(
+            text: TextSpan(text: items[i].$3, style: labelStyle),
+            textDirection: TextDirection.ltr,
+            textScaler: scaler,
+            maxLines: 1,
+          )..layout();
+          return min(tp.width + 7 + 14, maxExtra);
+        }
+
+        final extras = [for (var i = 0; i < n; i++) extra(i) * amount(i)];
+        final base = (box.maxWidth - extras.fold<double>(0, (a, e) => a + e)) / n;
+        final widths = [for (final e in extras) base + e];
+        final lefts = <double>[0];
+        for (var i = 1; i < n; i++) {
+          lefts.add(lefts[i - 1] + widths[i - 1]);
+        }
+
+        // Pill: from the old tab's slot to the new one's.
+        final stretch = sin(p * pi) * 16 * (_from == to ? 0 : 1);
+        final pillLeft = lerpDouble(lefts[_from], lefts[to], p)! - stretch / 2;
+        final pillWidth = lerpDouble(widths[_from], widths[to], p)! + stretch;
+
+        return Stack(
+          children: [
+            Positioned(
+              left: pillLeft + 2,
+              width: max(0, pillWidth - 4),
+              top: 0,
+              bottom: 0,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: dark ? 0.22 : 0.14),
+                  borderRadius: BorderRadius.circular(26),
+                ),
+              ),
+            ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < n; i++)
+                  SizedBox(
+                    width: widths[i],
+                    child: _NavItem(
+                      icon: items[i].$1,
+                      selectedIcon: items[i].$2,
+                      label: items[i].$3,
+                      labelStyle: labelStyle,
+                      selected: i == to,
+                      amount: amount(i),
+                      onTap: () => widget.onSelected(i),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        );
+      }),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final TextStyle labelStyle;
+  final bool selected;
+
+  /// 0..1 while animating: drives colour, icon fill and the label reveal.
+  final double amount;
+  final VoidCallback onTap;
+
+  const _NavItem({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.labelStyle,
+    required this.selected,
+    required this.amount,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final accent = Theme.of(context).colorScheme.primary;
+    // Ease the reveal so the label appears once the pill has mostly arrived.
+    final reveal = Curves.easeIn.transform(amount);
     return Semantics(
       button: true,
       selected: selected,
@@ -166,58 +296,92 @@ class _NavItem extends StatelessWidget {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
-          child: AnimatedContainer(
-            duration: _duration,
-            curve: Curves.easeOutCubic,
-            margin: const EdgeInsets.symmetric(horizontal: 2),
-            decoration: BoxDecoration(
-              color: selected
-                  ? accent.withValues(alpha: dark ? 0.22 : 0.14)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(26),
-            ),
-            child: ClipRect(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  AnimatedSwitcher(
-                    duration: _duration,
-                    transitionBuilder: (child, a) =>
-                        ScaleTransition(scale: a, child: child),
-                    child: Icon(
-                      selected ? selectedIcon : icon,
-                      key: ValueKey(selected),
-                      size: 23,
-                      color: selected ? accent : c.iconSecondary,
-                    ),
-                  ),
-                  // The label slides out beside the icon when selected.
-                  Flexible(
-                    child: AnimatedSize(
-                      duration: _duration,
-                      curve: Curves.easeOutCubic,
-                      child: selected
-                          ? Padding(
-                              padding: const EdgeInsets.only(left: 7),
-                              child: Text(
-                                label,
-                                maxLines: 1,
-                                softWrap: false,
-                                overflow: TextOverflow.fade,
-                                style: TextStyle(
-                                  color: c.textPrimary,
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ),
-                ],
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Transform.scale(
+                // A small lift as the tab becomes active.
+                scale: 1 + 0.08 * sin(amount * pi),
+                child: Icon(
+                  amount > 0.5 ? selectedIcon : icon,
+                  size: 23,
+                  color: Color.lerp(c.iconSecondary, accent, amount),
+                ),
               ),
-            ),
+              if (reveal > 0.01)
+                Flexible(
+                  child: ClipRect(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: reveal,
+                      child: Opacity(
+                        opacity: reveal,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 7),
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.clip,
+                            style: labelStyle,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Fades and lifts [child] in whenever [index] changes — the page switch
+/// under the tab bar. [child] (an IndexedStack) is kept, not rebuilt, so
+/// every tab keeps its scroll position and state.
+class TabFade extends StatefulWidget {
+  final int index;
+  final Widget child;
+
+  const TabFade({super.key, required this.index, required this.child});
+
+  @override
+  State<TabFade> createState() => _TabFadeState();
+}
+
+class _TabFadeState extends State<TabFade> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+    value: 1,
+  );
+  late final Animation<double> _curve =
+      CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+
+  @override
+  void didUpdateWidget(TabFade old) {
+    super.didUpdateWidget(old);
+    if (old.index != widget.index) _c.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _curve,
+      child: widget.child,
+      builder: (context, child) => Opacity(
+        opacity: 0.35 + 0.65 * _curve.value,
+        child: Transform.translate(
+          offset: Offset(0, 10 * (1 - _curve.value)),
+          child: child,
         ),
       ),
     );
