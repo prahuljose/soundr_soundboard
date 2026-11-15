@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 
-/// Flashlight and vibration, via the native `com.soundr.app/device` channel
+/// Flashlight, vibration and keep-screen-on, via the native `com.soundr.app/device` channel
 /// (see android/.../DeviceFeatures.kt). Every call fails soft: on platforms
 /// without the channel, or devices without the hardware, it simply no-ops.
 class DeviceFeatures {
@@ -26,6 +26,13 @@ class DeviceFeatures {
   static Future<void> cancelVibrate() async {
     try {
       await _channel.invokeMethod('cancelVibrate');
+    } catch (_) {}
+  }
+
+  /// Keeps the screen from sleeping while [on] (performance mode).
+  static Future<void> keepAwake(bool on) async {
+    try {
+      await _channel.invokeMethod('keepAwake', {'on': on});
     } catch (_) {}
   }
 

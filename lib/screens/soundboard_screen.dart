@@ -28,6 +28,7 @@ import '../widgets/sound_sheet.dart';
 import 'clip_editor_screen.dart';
 import 'decibel_screen.dart';
 import 'guitar_tuner_screen.dart';
+import 'performance_screen.dart';
 import 'reverse_challenge_screen.dart';
 import 'sing_note_screen.dart';
 import 'speaker_cleaner_screen.dart';
@@ -647,6 +648,60 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     );
   }
 
+  /// The sets performance mode can show: favourites, each board, the most
+  /// played, and everything. Empty sets are left out.
+  List<PerformanceSet> _performanceSets() {
+    final all = _allSounds;
+    final byId = {for (final s in all) s.id: s};
+    final mostPlayed = all.where((s) => (_playCounts[s.id] ?? 0) > 0).toList()
+      ..sort((a, b) => (_playCounts[b.id] ?? 0).compareTo(_playCounts[a.id] ?? 0));
+    final sets = <PerformanceSet>[
+      PerformanceSet(
+        id: 'favourites',
+        name: 'Favourites',
+        emoji: '⭐',
+        sounds: all.where((s) => _favorites.contains(s.id)).toList(),
+      ),
+      for (final scene in _scenes)
+        PerformanceSet(
+          id: 'board_${scene.id}',
+          name: scene.name,
+          emoji: scene.emoji,
+          sounds: [
+            for (final id in _sceneSoundIds[scene.id] ?? const <String>{})
+              if (byId[id] != null) byId[id]!,
+          ],
+        ),
+      PerformanceSet(
+        id: 'most_played',
+        name: 'Most played',
+        emoji: '🔥',
+        sounds: mostPlayed.take(24).toList(),
+      ),
+      if (_userClips.isNotEmpty)
+        PerformanceSet(id: 'my_clips', name: 'My Clips', emoji: '🎙️', sounds: _userClips),
+      PerformanceSet(id: 'all', name: 'All sounds', emoji: '🔊', sounds: all),
+    ];
+    return sets.where((s) => s.sounds.isNotEmpty).toList();
+  }
+
+  Future<void> _openPerformance({String? initialSetId}) async {
+    Haptics.light();
+    await _stopAll();
+    if (!mounted) return;
+    final sets = _performanceSets();
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PerformanceScreen(
+          sets: sets,
+          initialSetId: sets.any((s) => s.id == initialSetId) ? initialSetId : null,
+          preloaded: _preloaded,
+        ),
+      ),
+    );
+  }
+
   void _showSceneOptions(SceneModel scene) {
     showModalBottomSheet(
       context: context,
@@ -678,6 +733,14 @@ class _SoundboardScreenState extends State<SoundboardScreen>
             ),
             const SizedBox(height: 16),
             Divider(color: Theme.of(context).extension<AppColors>()!.border, height: 1),
+            _SheetOption(
+              icon: Icons.grid_on_rounded,
+              label: 'Perform this board',
+              onTap: () {
+                Navigator.pop(ctx);
+                _openPerformance(initialSetId: 'board_${scene.id}');
+              },
+            ),
             _SheetOption(
               icon: Icons.edit_rounded,
               label: 'Rename board',
@@ -2408,6 +2471,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                     icon: Icon(Icons.search_rounded, color: c.textPrimary),
                     tooltip: 'Search',
                     onPressed: _openSearch,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.grid_on_rounded, color: c.textPrimary),
+                    tooltip: 'Performance mode',
+                    onPressed: () => _openPerformance(),
                   ),
                   IconButton(
                     icon: Icon(Icons.bar_chart_rounded, color: c.textPrimary),
