@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 
 import '../services/haptics.dart';
+import '../services/metronome_presets.dart';
 import '../theme/app_colors.dart';
+import '../widgets/bpm_finder_sheet.dart';
 import '../widgets/metronome_widgets.dart';
 
 // ---------------------------------------------------------------------------
@@ -87,47 +89,77 @@ String _tempoName(int bpm) {
 // ---------------------------------------------------------------------------
 
 class MetronomeScreen extends StatefulWidget {
-  const MetronomeScreen({super.key, @visibleForTesting this.debugSoundReady = false});
+  const MetronomeScreen({
+    super.key,
+    @visibleForTesting this.debugSoundReady = false,
+    @visibleForTesting this.clock,
+    @visibleForTesting this.store,
+    @visibleForTesting this.debugMicAudio,
+  });
 
   /// Tests only: treat the click sounds as loaded (the audio engine doesn't
   /// exist under `flutter test`), so the play button is enabled.
   final bool debugSoundReady;
+
+  /// Monotonic time source for click scheduling and tap timing. Defaults to
+  /// a [Stopwatch]; widget tests pass the binding's fake clock.
+  final Duration Function()? clock;
+
+  /// Where saved tempos and the last-used setup live. Defaults to the app's
+  /// settings table.
+  final MetronomeStore? store;
+
+  /// Feeds the BPM finder 16-bit PCM at 44.1 kHz instead of the microphone.
+  final Stream<Uint8List>? debugMicAudio;
 
   @override
   State<MetronomeScreen> createState() => _MetronomeScreenState();
 }
 
 class _MetronomeScreenState extends State<MetronomeScreen> {
-  static const int _minBpm = 40;
-  static const int _maxBpm = 240;
+  static const int _minBpm = kMetronomeMinBpm;
+  static const int _maxBpm = kMetronomeMaxBpm;
 
-  static const List<(int, String)> _signatures = [
-    (2, '2/4'),
-    (3, '3/4'),
-    (4, '4/4'),
-    (6, '6/8'),
+  static final List<(int, String)> _signatures = [
+    for (final b in kMetronomeBeats) (b, metronomeSignatureLabel(b)),
   ];
 
-  // BPM & signature
+  // BPM, signature, subdivision
   int _bpm = 120;
   int _beatsPerBar = 4;
+  MetronomeSubdivision _subdivision = MetronomeSubdivision.none;
+
+  MetronomeSetup get _setup => MetronomeSetup(
+    bpm: _bpm,
+    beatsPerBar: _beatsPerBar,
+    subdivision: _subdivision,
+  );
 
   // Playback state
   bool _running = false;
   bool _flash = false;
-  int _currentBeat = 0;
   int _lastBeat = -1;
 
-  // Timer
+  // Click scheduling: sub-tick [_tick] sounds at
+  // `_startedAt + clickTimeMicros(_tick)`. Every wait is measured against
+  // that fixed origin, so neither timer lateness nor rounding accumulates.
+  final Stopwatch _stopwatch = Stopwatch()..start();
   Timer? _timer;
+  Timer? _flashTimer;
+  int _tick = 0;
+  Duration _startedAt = Duration.zero;
 
   // Audio
   AudioSource? _clickSrc;
   AudioSource? _accentSrc;
+  AudioSource? _subSrc;
   late bool _soundReady = widget.debugSoundReady;
 
-  // Tap tempo
-  final List<DateTime> _taps = [];
+  // Saved tempos / last-used setup
+  late final MetronomeStore _store = widget.store ?? const SettingsMetronomeStore();
+  List<MetronomePreset> _presets = [];
+  bool _touched = false; // the user changed something before the load landed
+  Timer? _saveTimer;
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -137,6 +169,7 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
   void initState() {
     super.initState();
     _initSounds();
+    _load();
   }
 
   Future<void> _initSounds() async {
@@ -149,6 +182,11 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
         'metro_accent',
         _buildSineWav(freqHz: 1500, amplitude: 0.70, decayRate: 35),
       );
+      // Subdivisions: lower, quieter and shorter than the beat click.
+      _subSrc = await SoLoud.instance.loadMem(
+        'metro_sub',
+        _buildSineWav(freqHz: 700, durationMs: 40, amplitude: 0.26, decayRate: 70),
+      );
       if (mounted) setState(() => _soundReady = true);
     } catch (_) {
       // Sound init failed — UI stays disabled
@@ -158,66 +196,143 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
   @override
   void dispose() {
     _timer?.cancel();
-    try {
-      if (_clickSrc != null) SoLoud.instance.disposeSource(_clickSrc!);
-    } catch (_) {}
-    try {
-      if (_accentSrc != null) SoLoud.instance.disposeSource(_accentSrc!);
-    } catch (_) {}
+    _flashTimer?.cancel();
+    if (_saveTimer?.isActive ?? false) {
+      _saveTimer!.cancel();
+      _saveLast();
+    }
+    for (final src in [_clickSrc, _accentSrc, _subSrc]) {
+      try {
+        if (src != null) SoLoud.instance.disposeSource(src);
+      } catch (_) {}
+    }
     super.dispose();
   }
 
   // ---------------------------------------------------------------------------
-  // Timer logic
+  // Persistence (failures are silent: the metronome works without storage)
   // ---------------------------------------------------------------------------
 
-  Duration get _beatInterval =>
-      Duration(microseconds: (60000000 / _bpm).round());
+  Future<void> _load() async {
+    List<MetronomePreset> presets;
+    MetronomeSetup? last;
+    try {
+      presets = decodePresets(await _store.read(MetronomeStore.presetsKey));
+      last = decodeSetup(await _store.read(MetronomeStore.lastKey));
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      if (_presets.isEmpty) _presets = presets;
+      if (last != null && !_touched && !_running) {
+        _bpm = last.bpm;
+        _beatsPerBar = last.beatsPerBar;
+        _subdivision = last.subdivision;
+      }
+    });
+  }
 
-  void _tick() {
-    final int beat = _currentBeat;
-    final AudioSource? src = beat == 0 ? _accentSrc : _clickSrc;
+  /// Notes a change by the user and saves the setup shortly after.
+  void _changed() {
+    _touched = true;
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 500), _saveLast);
+  }
+
+  void _saveLast() {
+    try {
+      _store
+          .write(MetronomeStore.lastKey, encodeSetup(_setup))
+          .then((_) {}, onError: (Object _) {});
+    } catch (_) {}
+  }
+
+  void _savePresets() {
+    try {
+      _store
+          .write(MetronomeStore.presetsKey, encodePresets(_presets))
+          .then((_) {}, onError: (Object _) {});
+    } catch (_) {}
+  }
+
+  // ---------------------------------------------------------------------------
+  // Click scheduling
+  // ---------------------------------------------------------------------------
+
+  Duration _now() => widget.clock?.call() ?? _stopwatch.elapsed;
+
+  void _fire() {
+    if (!_running) return;
+    final cpb = _subdivision.clicksPerBeat;
+    final kind = clickKindAt(_tick, beatsPerBar: _beatsPerBar, clicksPerBeat: cpb);
+    // Sound first: nothing else should sit between the timer and the click.
+    final src = switch (kind) {
+      ClickKind.accent => _accentSrc,
+      ClickKind.beat => _clickSrc,
+      ClickKind.sub => _subSrc,
+    };
     if (src != null) {
       try {
         SoLoud.instance.play(src);
       } catch (_) {}
     }
-    if (beat == 0) Haptics.medium();
-    setState(() {
-      _lastBeat = beat;
-      _flash = true;
-      _currentBeat = (beat + 1) % _beatsPerBar;
-    });
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted) setState(() => _flash = false);
-    });
+    // Only beats touch the UI; sub-clicks (up to 16 a second) just sound.
+    if (kind != ClickKind.sub) {
+      final beat = beatAt(_tick, beatsPerBar: _beatsPerBar, clicksPerBeat: cpb);
+      if (beat == 0) Haptics.medium();
+      setState(() {
+        _lastBeat = beat;
+        _flash = true;
+      });
+      _flashTimer?.cancel();
+      _flashTimer = Timer(const Duration(milliseconds: 100), () {
+        if (mounted) setState(() => _flash = false);
+      });
+    }
+    _tick++;
+    _scheduleNext();
+  }
+
+  void _scheduleNext() {
+    final cpb = _subdivision.clicksPerBeat;
+    final due = clickTimeMicros(_tick, bpm: _bpm, clicksPerBeat: cpb);
+    var wait = due - (_now() - _startedAt).inMicroseconds;
+    // Far behind (the app was suspended): carry on from now rather than
+    // rattling through the missed clicks.
+    if (wait < -clickTimeMicros(1, bpm: _bpm, clicksPerBeat: cpb)) {
+      _startedAt += Duration(microseconds: -wait);
+      wait = 0;
+    }
+    // Timers have millisecond resolution; round to the nearest.
+    _timer = Timer(Duration(milliseconds: (max(0, wait) + 500) ~/ 1000), _fire);
+  }
+
+  void _begin() {
+    _timer?.cancel();
+    _tick = 0;
+    _startedAt = _now();
+    _fire();
   }
 
   void _start() {
-    _currentBeat = 0;
-    _tick();
-    _timer = Timer.periodic(_beatInterval, (_) => _tick());
     setState(() => _running = true);
+    _begin();
   }
 
   void _stop() {
     _timer?.cancel();
     _timer = null;
+    _flashTimer?.cancel();
     setState(() {
       _running = false;
       _flash = false;
-      _currentBeat = 0;
       _lastBeat = -1;
     });
   }
 
   void _restartIfRunning() {
-    if (!_running) return;
-    _timer?.cancel();
-    _timer = null;
-    _currentBeat = 0;
-    _tick();
-    _timer = Timer.periodic(_beatInterval, (_) => _tick());
+    if (_running) _begin();
   }
 
   // ---------------------------------------------------------------------------
@@ -231,29 +346,151 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
     if (next == _bpm) return;
     Haptics.selection();
     setState(() => _bpm = next);
-    _taps.clear();
+    _changed();
   }
 
-  /// Tap tempo: averages the last (up to) 4 intervals between taps. A pause of
-  /// more than 2 s starts a fresh measurement.
-  void _onTapTempo() {
-    Haptics.light();
-    final now = DateTime.now();
-    if (_taps.isNotEmpty &&
-        now.difference(_taps.last) > const Duration(seconds: 2)) {
-      _taps.clear();
-    }
-    _taps.add(now);
-    while (_taps.length > 5) {
-      _taps.removeAt(0);
-    }
-    if (_taps.length < 2) return;
-    final double avgMs =
-        _taps.last.difference(_taps.first).inMicroseconds / 1000 / (_taps.length - 1);
-    if (avgMs <= 0) return;
-    final int newBpm = (60000 / avgMs).round().clamp(_minBpm, _maxBpm);
-    setState(() => _bpm = newBpm);
+  void _apply(MetronomeSetup setup) {
+    setState(() {
+      _bpm = setup.bpm.clamp(_minBpm, _maxBpm);
+      _beatsPerBar = setup.beatsPerBar;
+      _subdivision = setup.subdivision;
+    });
+    _changed();
     _restartIfRunning();
+  }
+
+  /// Opens the BPM finder. The metronome is stopped first — the microphone
+  /// would hear its clicks — and stays stopped afterwards.
+  Future<void> _openFinder() async {
+    Haptics.light();
+    if (_running) _stop();
+    final bpm = await showBpmFinderSheet(
+      context,
+      clock: widget.clock,
+      debugAudio: widget.debugMicAudio,
+    );
+    if (bpm == null || !mounted) return;
+    setState(() => _bpm = bpm.clamp(_minBpm, _maxBpm));
+    _changed();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Saved tempos
+  // ---------------------------------------------------------------------------
+
+  void _snack(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _savePreset() async {
+    Haptics.light();
+    if (_presets.length >= kMetronomeMaxPresets) {
+      _snack('You can keep up to $kMetronomeMaxPresets tempos. Delete one to save another.');
+      return;
+    }
+    final setup = _setup;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _NameDialog(
+        title: 'Save tempo',
+        detail: setup.summary,
+        action: 'Save',
+      ),
+    );
+    if (name == null || !mounted) return;
+    setState(() {
+      _presets = [MetronomePreset(name: cleanPresetName(name), setup: setup), ..._presets];
+    });
+    _savePresets();
+  }
+
+  Future<void> _presetMenu(int index) async {
+    Haptics.medium();
+    final preset = _presets[index];
+    final c = Theme.of(context).extension<AppColors>()!;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: c.surfaceCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: c.handleBar,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                preset.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: c.textPrimary,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                preset.setup.summary,
+                style: TextStyle(color: c.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: Icon(Icons.edit_rounded, color: c.textPrimary),
+                title: Text('Rename', style: TextStyle(color: c.textPrimary)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                onTap: () => Navigator.of(context).pop('rename'),
+              ),
+              ListTile(
+                leading: Icon(Icons.delete_outline_rounded,
+                    color: Theme.of(context).colorScheme.error),
+                title: Text('Delete',
+                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                onTap: () => Navigator.of(context).pop('delete'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    // The list can't have changed under a modal sheet, but stay safe.
+    final at = _presets.indexOf(preset);
+    if (at < 0) return;
+    if (action == 'delete') {
+      setState(() => _presets = [..._presets]..removeAt(at));
+      _savePresets();
+      _snack('Deleted “${preset.title}”');
+    } else {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (_) => _NameDialog(
+          title: 'Rename tempo',
+          detail: preset.setup.summary,
+          initial: preset.name,
+          action: 'Rename',
+        ),
+      );
+      if (name == null || !mounted) return;
+      final now = _presets.indexOf(preset);
+      if (now < 0) return;
+      setState(() => _presets = [..._presets]..[now] = preset.renamed(name));
+      _savePresets();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -285,13 +522,13 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 20),
                     MetronomeBeatDots(
                       beatsPerBar: _beatsPerBar,
                       currentBeat: _running ? _lastBeat : -1,
                       pulse: _flash,
                     ),
-                    const SizedBox(height: 36),
+                    const SizedBox(height: 24),
 
                     // ── BPM ──────────────────────────────────────────────
                     Row(
@@ -347,7 +584,7 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 20),
 
                     // ── Tempo slider ─────────────────────────────────────
                     Padding(
@@ -389,45 +626,56 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
                         semanticFormatterCallback: (v) => '${v.round()} BPM',
                         onChanged: (v) {
-                          setState(() {
-                            _bpm = v.round();
-                            _taps.clear();
-                          });
+                          setState(() => _bpm = v.round());
+                          _changed();
                         },
                         onChangeEnd: (_) => _restartIfRunning(),
                       ),
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 8),
+
+                    // ── Saved tempos ─────────────────────────────────────
+                    MetronomePresetRow(
+                      presets: _presets,
+                      current: _setup,
+                      onSave: _savePreset,
+                      onLoad: (i) {
+                        Haptics.selection();
+                        _apply(_presets[i].setup);
+                      },
+                      onMenu: _presetMenu,
+                    ),
+                    const SizedBox(height: 16),
 
                     // ── Time signature ───────────────────────────────────
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
-                      child: Text(
-                        'TIME SIGNATURE',
-                        style: TextStyle(
-                          color: c.textMuted,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.4,
-                        ),
-                      ),
-                    ),
+                    const MetronomeSectionLabel('TIME SIGNATURE'),
                     MetronomeSignaturePicker(
                       options: _signatures,
                       selected: _beatsPerBar,
                       onSelect: (beats) {
                         Haptics.selection();
-                        setState(() {
-                          _beatsPerBar = beats;
-                          _currentBeat = 0;
-                        });
+                        setState(() => _beatsPerBar = beats);
+                        _changed();
                         _restartIfRunning();
                       },
                     ),
                     const SizedBox(height: 14),
 
-                    // ── Tap tempo ────────────────────────────────────────
-                    MetronomeTapPad(onTap: _onTapTempo),
+                    // ── Subdivision ──────────────────────────────────────
+                    const MetronomeSectionLabel('SUBDIVISION'),
+                    MetronomeSubdivisionPicker(
+                      selected: _subdivision,
+                      onSelect: (s) {
+                        Haptics.selection();
+                        setState(() => _subdivision = s);
+                        _changed();
+                        _restartIfRunning();
+                      },
+                    ),
+                    const SizedBox(height: 14),
+
+                    // ── Find BPM ─────────────────────────────────────────
+                    MetronomeFindBpmPad(onTap: _openFinder),
                   ],
                 ),
               ),
@@ -452,6 +700,107 @@ class _MetronomeScreenState extends State<MetronomeScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Asks for a preset's name. Pops with the text (possibly empty — the chip
+/// then shows the tempo), or null if cancelled.
+class _NameDialog extends StatefulWidget {
+  const _NameDialog({
+    required this.title,
+    required this.detail,
+    required this.action,
+    this.initial = '',
+  });
+
+  final String title;
+  final String detail;
+  final String action;
+  final String initial;
+
+  @override
+  State<_NameDialog> createState() => _NameDialogState();
+}
+
+class _NameDialogState extends State<_NameDialog> {
+  late final _controller = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text);
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final font = Theme.of(context).textTheme.bodyMedium?.fontFamily;
+    final tint = metronomeStroke(context, lightDarken: 0.45);
+    return AlertDialog(
+      backgroundColor: c.surfaceCard,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: Text(
+        widget.title,
+        style: TextStyle(color: c.textPrimary, fontSize: 19, fontWeight: FontWeight.w700),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.detail, style: TextStyle(color: c.textSecondary, fontSize: 14)),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: kMetronomePresetNameMax,
+            textCapitalization: TextCapitalization.sentences,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _submit(),
+            cursorColor: tint,
+            style: TextStyle(color: c.textPrimary, fontSize: 16),
+            decoration: InputDecoration(
+              hintText: 'Name (optional)',
+              hintStyle: TextStyle(color: c.textMuted),
+              counterStyle: TextStyle(color: c.textMuted, fontSize: 11),
+              filled: true,
+              fillColor: c.scaffoldBg,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide(color: c.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide(color: tint, width: 1.5),
+              ),
+            ),
+          ),
+        ],
+      ),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: TextButton.styleFrom(
+            foregroundColor: c.textSecondary,
+            textStyle: TextStyle(fontFamily: font, fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          style: FilledButton.styleFrom(
+            backgroundColor: kMetronomeTint,
+            foregroundColor: kMetronomeInk,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            textStyle: TextStyle(fontFamily: font, fontSize: 15, fontWeight: FontWeight.w700),
+          ),
+          child: Text(widget.action),
+        ),
+      ],
     );
   }
 }
