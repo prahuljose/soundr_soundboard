@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 
 import '../models/sound_model.dart';
@@ -13,6 +14,14 @@ enum _CardState { faceDown, faceUp, matched }
 
 String _formatTime(int s) =>
     '${(s ~/ 60).toString().padLeft(2, '0')}:${(s % 60).toString().padLeft(2, '0')}';
+
+/// [_formatTime] for screen readers: "1 minute 5 seconds", not "01:05".
+String _spokenTime(int s) {
+  final m = s ~/ 60, sec = s % 60;
+  final secs = '$sec ${sec == 1 ? 'second' : 'seconds'}';
+  if (m == 0) return secs;
+  return '$m ${m == 1 ? 'minute' : 'minutes'} $secs';
+}
 
 enum _Difficulty { easy, medium, hard }
 
@@ -177,6 +186,14 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
     } catch (_) {}
   }
 
+  /// Speaks a game event to screen-reader users; silent for everyone else.
+  void _announce(String message) {
+    if (!mounted) return;
+    if (!MediaQuery.supportsAnnounceOf(context)) return;
+    SemanticsService.sendAnnouncement(
+        View.of(context), message, Directionality.of(context));
+  }
+
   void _onCardTap(_Card card) {
     if (_locked) return;
     if (card.state != _CardState.faceDown) return;
@@ -201,6 +218,11 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
         card.state = _CardState.matched;
         _matchedPairs++;
       });
+      _announce(_matchedPairs == _pairCount
+          ? 'Match: ${card.sound.name}. All pairs found in '
+              '${_spokenTime(_elapsedSeconds)} and $_moves moves.'
+          : 'Match: ${card.sound.name}. '
+              '$_matchedPairs of $_pairCount pairs found.');
       if (_matchedPairs == _pairCount) {
         _timer?.cancel();
         _playSoundById('s90');
@@ -211,6 +233,7 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
       }
     } else {
       _locked = true;
+      _announce('No match: ${first.sound.name} and ${card.sound.name}.');
       Future.delayed(const Duration(milliseconds: 1200), () {
         if (!mounted) return;
         setState(() {
@@ -261,7 +284,10 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
         ),
         actions: [
           if (_difficulty != null) ...[
-            Padding(
+            Semantics(
+              label: '$_moves ${_moves == 1 ? 'move' : 'moves'}',
+              excludeSemantics: true,
+              child: Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Row(
                 children: [
@@ -276,6 +302,7 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
                     ),
                   ),
                 ],
+              ),
               ),
             ),
             IconButton(
@@ -296,6 +323,8 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       child: Text(
                         _formatTime(_elapsedSeconds),
+                        semanticsLabel: 'Time ${_spokenTime(_elapsedSeconds)}, '
+                            '$_matchedPairs of $_pairCount pairs found',
                         style: TextStyle(
                           color: c.textSecondary,
                           fontSize: 15,
@@ -318,9 +347,30 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
                           ),
                           itemBuilder: (context, i) {
                             final card = _grid[i];
-                            return GestureDetector(
-                              onTap: () => _onCardTap(card),
-                              child: _MatchCard(card: card, accent: accent, colors: c),
+                            final n = i + 1;
+                            return Semantics(
+                              button: true,
+                              // Matched cards are done; they no longer flip.
+                              enabled: card.state != _CardState.matched,
+                              label: switch (card.state) {
+                                _CardState.faceDown => 'Card $n, face down',
+                                _CardState.faceUp =>
+                                  'Card $n, ${card.sound.name}, face up',
+                                _CardState.matched =>
+                                  'Card $n, ${card.sound.name}, matched',
+                              },
+                              onTapHint: card.state == _CardState.faceDown
+                                  ? 'flip and hear it'
+                                  : null,
+                              excludeSemantics: true,
+                              onTap: card.state == _CardState.faceDown
+                                  ? () => _onCardTap(card)
+                                  : null,
+                              child: GestureDetector(
+                                onTap: () => _onCardTap(card),
+                                child: _MatchCard(
+                                    card: card, accent: accent, colors: c),
+                              ),
                             );
                           },
                         ),
@@ -364,7 +414,9 @@ class _PairMatchScreenState extends State<PairMatchScreen> {
                 border: Border.all(color: accent.withValues(alpha: 0.35), width: 2),
               ),
               child: const Center(
-                child: Text('🃏', style: TextStyle(fontSize: 42)),
+                child: ExcludeSemantics(
+                  child: Text('🃏', style: TextStyle(fontSize: 42)),
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -422,9 +474,18 @@ class _DifficultyTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final m = _meta[difficulty]!;
+    final spokenBest = best?.seconds == null
+        ? ''
+        : ', best ${_spokenTime(best!.seconds!)}'
+            '${best!.moves == null ? '' : ' in ${best!.moves} moves'}';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: GestureDetector(
+      child: Semantics(
+        button: true,
+        label: '${m.label}, ${m.sub.replaceAll(' · ', ', ')}$spokenBest',
+        excludeSemantics: true,
+        onTap: onTap,
+        child: GestureDetector(
         onTap: onTap,
         child: Container(
           width: double.infinity,
@@ -483,6 +544,7 @@ class _DifficultyTile extends StatelessWidget {
               Icon(Icons.chevron_right_rounded, color: colors.textMuted, size: 22),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -583,7 +645,15 @@ class _WinOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    // Reads as a dialog, and keeps focus off the finished grid behind it.
+    return BlockSemantics(
+      child: Semantics(
+      container: true,
+      scopesRoute: true,
+      explicitChildNodes: true,
+      namesRoute: true,
+      label: 'Game over',
+      child: Container(
       color: Colors.black.withValues(alpha: 0.6),
       child: Center(
         child: Container(
@@ -597,10 +667,13 @@ class _WinOverlay extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('🎉', style: TextStyle(fontSize: 48)),
+              const ExcludeSemantics(
+                  child: Text('🎉', style: TextStyle(fontSize: 48))),
               const SizedBox(height: 12),
               Text(
                 'You matched them all!',
+                semanticsLabel: 'You matched them all! '
+                    'Time ${_spokenTime(elapsedSeconds)}, $moves moves.',
                 style: TextStyle(
                   color: colors.textPrimary,
                   fontSize: 20,
@@ -608,12 +681,15 @@ class _WinOverlay extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 20),
-              Row(
+              // Spoken as part of the headline above.
+              ExcludeSemantics(
+                child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   _Stat(label: 'Time', value: _formatTime(elapsedSeconds), accent: accent, colors: colors),
                   _Stat(label: 'Moves', value: '$moves', accent: accent, colors: colors),
                 ],
+                ),
               ),
               const SizedBox(height: 16),
               if (newBestTime || newBestMoves)
@@ -630,6 +706,11 @@ class _WinOverlay extends StatelessWidget {
                         : newBestTime
                             ? '🏆  New best time!'
                             : '🏆  Fewest moves yet!',
+                    semanticsLabel: newBestTime && newBestMoves
+                        ? 'New best time and fewest moves!'
+                        : newBestTime
+                            ? 'New best time!'
+                            : 'Fewest moves yet!',
                     style: TextStyle(
                       color: colors.textPrimary,
                       fontSize: 13,
@@ -640,6 +721,8 @@ class _WinOverlay extends StatelessWidget {
               else if (best?.seconds != null)
                 Text(
                   'Best: ${_formatTime(best!.seconds!)} · ${best!.moves} moves',
+                  semanticsLabel: 'Best: ${_spokenTime(best!.seconds!)}, '
+                      '${best!.moves} moves',
                   style: TextStyle(color: colors.textMuted, fontSize: 13),
                 ),
               const SizedBox(height: 24),
@@ -698,6 +781,8 @@ class _WinOverlay extends StatelessWidget {
             ],
           ),
         ),
+      ),
+      ),
       ),
     );
   }
