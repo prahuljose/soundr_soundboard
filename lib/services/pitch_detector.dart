@@ -15,7 +15,7 @@ class PitchReading {
   const PitchReading(this.hz, this.clarity, this.rms);
 }
 
-/// Monophonic pitch detection for a guitar tuner, using the YIN algorithm
+/// Monophonic pitch detection for an instrument tuner, using the YIN algorithm
 /// (de Cheveigné & Kawahara, 2002).
 ///
 /// Feed it 16-bit mono PCM as it arrives with [addPcm16] (or plain samples
@@ -23,8 +23,16 @@ class PitchReading {
 /// recent window and calls [onReading] with a [PitchReading], or with null
 /// when it's quiet or there's no clear pitch.
 ///
-/// Audio is halved to [sampleRate] / 2 before analysis — plenty for a guitar
-/// (the highest open string is ~330 Hz) and four times less work.
+/// Audio is reduced to [sampleRate] / [downsample] before analysis. The
+/// default of 2 is plenty for a guitar (the highest open string is ~330 Hz)
+/// and four times less work.
+///
+/// The defaults suit a guitar. Other instruments pass their own range: the
+/// analysis window is at least three periods of [minHz], so a lower [minHz]
+/// means more latency and more work per reading. A bass (down to ~26 Hz)
+/// stays cheap by using [downsample] 4. YIN looks for the repeat period of
+/// the whole waveform, so it finds the note from its overtones even when a
+/// phone mic barely picks up the fundamental.
 class PitchDetector {
   final int sampleRate;
 
@@ -32,6 +40,9 @@ class PitchDetector {
   /// (65.4 Hz); 1400 Hz covers the high E string's upper frets.
   final double minHz;
   final double maxHz;
+
+  /// Input samples averaged into one analysis sample (1, 2, 4…).
+  final int downsample;
 
   /// Input samples between analyses (~46 ms at 44.1 kHz).
   final int hopSize;
@@ -45,8 +56,8 @@ class PitchDetector {
 
   final void Function(PitchReading? reading) onReading;
 
-  // Analysis runs at half rate.
-  late final int _rate = sampleRate ~/ 2;
+  // Analysis runs at a reduced rate.
+  late final double _rate = sampleRate / downsample;
   late final int _tauMin = max(2, (_rate / maxHz).floor());
   late final int _tauMax = (_rate / minHz).ceil();
   // Integration window: at least ~3 periods of the lowest pitch.
@@ -57,7 +68,8 @@ class PitchDetector {
   late final Float64List _buf = Float64List(_needed * 4);
   int _filled = 0;
   int _sinceHop = 0;
-  double? _pendingHalf; // first of a pair awaiting its partner (downsampling)
+  double _pendingSum = 0; // samples awaiting the rest of their group
+  int _pendingCount = 0;
 
   late final Float64List _diff = Float64List(_tauMax + 1);
 
@@ -72,11 +84,16 @@ class PitchDetector {
     this.sampleRate = 44100,
     this.minHz = 60,
     this.maxHz = 1400,
+    this.downsample = 2,
     this.hopSize = 2048,
     this.silenceRms = 0.006,
     this.minClarity = 0.9,
     required this.onReading,
-  });
+  }) : assert(downsample >= 1),
+       assert(minHz > 0 && maxHz > minHz);
+
+  /// Audio needed before the first reading, in milliseconds.
+  int get latencyMs => (_needed * 1000 / _rate).ceil();
 
   static int _nextPow2(int n) {
     var p = 1;
@@ -105,18 +122,19 @@ class PitchDetector {
   void reset() {
     _filled = 0;
     _sinceHop = 0;
-    _pendingHalf = null;
+    _pendingSum = 0;
+    _pendingCount = 0;
   }
 
   void _addSample(double s) {
     _samplesIn++;
-    // 2:1 downsample; averaging pairs is a gentle low-pass against aliasing.
-    final first = _pendingHalf;
-    if (first == null) {
-      _pendingHalf = s;
-    } else {
-      _pendingHalf = null;
-      _push((first + s) * 0.5);
+    // Downsample by averaging each group: a gentle low-pass against
+    // aliasing.
+    _pendingSum += s;
+    if (++_pendingCount >= downsample) {
+      _push(_pendingSum / downsample);
+      _pendingSum = 0;
+      _pendingCount = 0;
     }
     if (++_sinceHop >= hopSize) {
       _sinceHop = 0;

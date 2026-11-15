@@ -16,19 +16,31 @@ import '../widgets/permission_denied_card.dart';
 import '../widgets/tuner_widgets.dart';
 
 const _kRate = 44100;
+const _kPrefInstrument = 'tuner_instrument';
 const _kPrefTuning = 'tuner_tuning';
 const _kPrefA4 = 'tuner_a4';
 const _kPrefChromatic = 'tuner_chromatic';
 
-/// Guitar tuner: listens to the mic, finds the string being played and
-/// shows how far it is from pitch. Tap a peg to tune one string at a time
-/// and hear its note.
+/// Where an instrument's last tuning is saved. The guitar keeps the key it
+/// had when the tuner was guitar-only, so tunings saved then still load.
+String _tuningPrefKey(Instrument i) =>
+    i.id == guitar.id ? _kPrefTuning : '${_kPrefTuning}_${i.id}';
+
+/// Instrument tuner (guitar, ukulele, bass, violin family): listens to the
+/// mic, finds the string being played and shows how far it is from pitch.
+/// Tap a peg to tune one string at a time and hear its note.
+///
+/// (Still named for the guitar it started with; other screens import it.)
 class GuitarTunerScreen extends StatefulWidget {
   /// Feeds 16-bit PCM at 44.1 kHz instead of the microphone (tests).
   @visibleForTesting
   final Stream<Uint8List>? debugAudio;
 
-  const GuitarTunerScreen({super.key, this.debugAudio});
+  /// Stands in for saved settings (tests). Read on open, written on change.
+  @visibleForTesting
+  final Map<String, String>? debugPrefs;
+
+  const GuitarTunerScreen({super.key, this.debugAudio, this.debugPrefs});
 
   @override
   State<GuitarTunerScreen> createState() => _GuitarTunerScreenState();
@@ -38,10 +50,23 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
     with WidgetsBindingObserver {
   final _recorder = AudioRecorder();
   StreamSubscription<Uint8List>? _sub;
-  late final PitchDetector _detector = PitchDetector(
-    sampleRate: _kRate,
-    onReading: _onPitch,
-  );
+
+  Instrument _instrument = guitar;
+
+  /// Each instrument's last tuning (instrument id → tuning id).
+  final Map<String, String> _lastTuning = {};
+
+  /// Listens over the range of the current instrument; rebuilt when that
+  /// changes (see [_useDetectorFor]).
+  late PitchDetector _detector = _instrument
+      .detectorFor(guitarTunings.first)
+      .build(sampleRate: _kRate, onReading: _onPitch);
+  DetectorConfig _detectorConfig = guitar.detector;
+
+  /// Audio time counted by earlier detectors, so the clock never restarts.
+  int _clockBaseMs = 0;
+  int get _nowMs => _clockBaseMs + _detector.audioMs;
+
   late final TunerEngine _engine = TunerEngine(
     tuning: guitarTunings.first,
     onStringTuned: _onStringTuned,
@@ -91,35 +116,63 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
     }
   }
 
+  bool get _prefsOff => widget.debugAudio != null && widget.debugPrefs == null;
+
+  Future<String?> _readPref(String key) async {
+    final debug = widget.debugPrefs;
+    return debug != null ? debug[key] : ClipRepository.getString(key);
+  }
+
+  void _writePref(String key, String value) {
+    final debug = widget.debugPrefs;
+    if (debug != null) {
+      debug[key] = value;
+    } else {
+      ClipRepository.setString(key, value).catchError((_) {});
+    }
+  }
+
   Future<void> _loadPrefs() async {
-    if (widget.debugAudio != null) return;
+    if (_prefsOff) return;
     try {
-      final id = await ClipRepository.getString(_kPrefTuning);
-      final a4 = int.tryParse(await ClipRepository.getString(_kPrefA4) ?? '');
-      final chromatic = await ClipRepository.getBool(_kPrefChromatic);
+      // No saved instrument means a guitar: that's all the tuner used to be.
+      final instrument = instrumentById(await _readPref(_kPrefInstrument));
+      final last = <String, String>{};
+      for (final i in instruments) {
+        final id = await _readPref(_tuningPrefKey(i));
+        if (id != null) last[i.id] = id;
+      }
+      final a4 = int.tryParse(await _readPref(_kPrefA4) ?? '');
+      final chromatic = await _readPref(_kPrefChromatic) == '1';
       if (!mounted) return;
       setState(() {
-        _engine.tuning = tuningById(id);
+        _lastTuning.addAll(last);
+        _instrument = instrument;
+        _engine.tuning = instrument.tuningById(last[instrument.id]);
         if (a4 != null && a4 >= 430 && a4 <= 450) _engine.a4 = a4.toDouble();
         _engine.chromatic = chromatic;
+        _useDetectorFor(instrument, _engine.tuning);
       });
     } catch (_) {}
   }
 
   void _savePrefs() {
-    if (widget.debugAudio != null) return;
-    ClipRepository.setString(
-      _kPrefTuning,
-      _engine.tuning.id,
-    ).catchError((_) {});
-    ClipRepository.setString(
-      _kPrefA4,
-      '${_engine.a4.round()}',
-    ).catchError((_) {});
-    ClipRepository.setBool(
-      _kPrefChromatic,
-      _engine.chromatic,
-    ).catchError((_) {});
+    if (_prefsOff) return;
+    _writePref(_kPrefInstrument, _instrument.id);
+    _writePref(_tuningPrefKey(_instrument), _engine.tuning.id);
+    _writePref(_kPrefA4, '${_engine.a4.round()}');
+    _writePref(_kPrefChromatic, _engine.chromatic ? '1' : '0');
+  }
+
+  /// Swaps in a detector for this instrument's range, if it differs. The
+  /// mic stream carries on; the new detector just needs a moment of audio
+  /// to fill its window.
+  void _useDetectorFor(Instrument instrument, GuitarTuning tuning) {
+    final config = instrument.detectorFor(tuning);
+    if (identical(config, _detectorConfig)) return;
+    _clockBaseMs += _detector.audioMs;
+    _detectorConfig = config;
+    _detector = config.build(sampleRate: _kRate, onReading: _onPitch);
   }
 
   // ── Microphone ──────────────────────────────────────────────────────────
@@ -169,7 +222,8 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
     if (!mounted) return;
     _detector.reset();
     _sub = stream.listen(
-      _detector.addPcm16,
+      // Not a tear-off: the detector is replaced when the instrument changes.
+      (bytes) => _detector.addPcm16(bytes),
       onError: (Object _) {
         if (mounted) setState(() => _error = 'The microphone stopped.');
       },
@@ -197,7 +251,7 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
   // ── Tuning ──────────────────────────────────────────────────────────────
 
   void _onPitch(PitchReading? r) {
-    final now = _detector.audioMs;
+    final now = _nowMs;
     if (now < _muteUntilMs) return;
     final next = _engine.add(r, now);
     if (!mounted) return;
@@ -237,9 +291,13 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
   void _playReference() {
     final s = _engine.lockedString;
     if (s == null) return;
-    final hz = midiToHz(_engine.tuning.strings[s], a4: _engine.a4);
+    // Bass notes play an octave up (a phone speaker can't sound 41 Hz).
+    final hz = _instrument.referenceHz(
+      _engine.tuning.strings[s],
+      a4: _engine.a4,
+    );
     final ms = ReferenceTone.duration.inMilliseconds;
-    _muteUntilMs = _detector.audioMs + ms + 250;
+    _muteUntilMs = _nowMs + ms + 250;
     _engine.resetNote();
     if (widget.debugAudio == null) ReferenceTone.play(hz);
     _toneTimer?.cancel();
@@ -266,12 +324,26 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
     });
   }
 
-  void _applyTuning({GuitarTuning? tuning, bool? chromatic, double? a4}) {
+  /// [instrument] alone switches to that instrument's last tuning.
+  void _applyTuning({
+    Instrument? instrument,
+    GuitarTuning? tuning,
+    bool? chromatic,
+    double? a4,
+  }) {
     setState(() {
+      if (instrument != null && instrument.id != _instrument.id) {
+        _instrument = instrument;
+        tuning ??= instrument.tuningById(_lastTuning[instrument.id]);
+      }
       final changedStrings =
-          (tuning != null && tuning.id != _engine.tuning.id) ||
+          (tuning != null && tuning!.id != _engine.tuning.id) ||
           (chromatic != null && chromatic != _engine.chromatic);
-      if (tuning != null) _engine.tuning = tuning;
+      if (tuning != null) {
+        _engine.tuning = tuning!;
+        _lastTuning[_instrument.id] = tuning!.id;
+      }
+      _useDetectorFor(_instrument, _engine.tuning);
       if (chromatic != null) _engine.chromatic = chromatic;
       if (a4 != null) _engine.a4 = a4;
       if (changedStrings || a4 != null) {
@@ -292,6 +364,8 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
       isScrollControlled: true,
       showDragHandle: true,
       builder: (_) => _TuningSheet(
+        instrument: _instrument,
+        lastTuning: _lastTuning,
         tuning: _engine.tuning,
         chromatic: _engine.chromatic,
         a4: _engine.a4,
@@ -309,7 +383,7 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
       backgroundColor: c.scaffoldBg,
       appBar: AppBar(
         title: const Text(
-          'Guitar Tuner',
+          'Tuner',
           style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
         ),
       ),
@@ -324,7 +398,7 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
                     icon: Icons.music_note_rounded,
                     permissionLabel: 'Microphone',
                     purpose:
-                        'The tuner listens to your guitar through the microphone. '
+                        'The tuner listens to your instrument through the microphone. '
                         'Audio is processed on your phone — nothing is recorded or sent.',
                     onGranted: () {
                       if (!mounted) return;
@@ -365,6 +439,7 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
             _NoteReadout(
               reading: _reading,
               engine: _engine,
+              instrument: _instrument,
               listening: _listening,
               error: _error,
               toneOn: _toneOn,
@@ -381,6 +456,7 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
                 children: [
                   Expanded(
                     child: _TuningButton(
+                      instrument: _instrument,
                       tuning: _engine.tuning,
                       chromatic: chromatic,
                       a4: _engine.a4,
@@ -410,6 +486,7 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                       child: TunerHeadstock(
                         tuning: _engine.tuning,
+                        shape: _instrument.head,
                         active: _reading.stringIndex ?? _engine.lockedString,
                         tuned: _engine.tuned,
                         onPeg: _pickPeg,
@@ -423,6 +500,7 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
               chromatic: chromatic,
               auto: _auto,
               allTuned: _engine.allTuned,
+              stringCount: _engine.tuning.strings.length,
               toneOn: _toneOn,
               noteLabel: _engine.lockedString == null
                   ? null
@@ -440,12 +518,14 @@ class _GuitarTunerScreenState extends State<GuitarTunerScreen>
 // ── Pieces ──────────────────────────────────────────────────────────────────
 
 class _TuningButton extends StatelessWidget {
+  final Instrument instrument;
   final GuitarTuning tuning;
   final bool chromatic;
   final double a4;
   final VoidCallback onTap;
 
   const _TuningButton({
+    required this.instrument,
     required this.tuning,
     required this.chromatic,
     required this.a4,
@@ -477,7 +557,7 @@ class _TuningButton extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        chromatic ? 'Chromatic' : tuning.name,
+                        chromatic ? 'Chromatic' : instrument.titleFor(tuning),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -488,7 +568,9 @@ class _TuningButton extends StatelessWidget {
                       ),
                       Text(
                         [
-                          chromatic ? 'Any note' : tuning.letters,
+                          chromatic
+                              ? _chromaticRange(instrument, tuning)
+                              : tuning.letters,
                           if (calibrated) 'A4 ${a4.round()} Hz',
                         ].join('  ·  '),
                         maxLines: 1,
@@ -511,6 +593,13 @@ class _TuningButton extends StatelessWidget {
     );
   }
 }
+
+/// What chromatic mode can hear: the detector listens over the current
+/// instrument's range (a guitar's covers most things).
+String _chromaticRange(Instrument instrument, GuitarTuning tuning) =>
+    instrument.id == guitar.id
+    ? 'Any note'
+    : 'Any note in ${(instrument.family ? tuning.name : instrument.name).toLowerCase()} range';
 
 class _AutoButton extends StatelessWidget {
   final bool on;
@@ -575,6 +664,7 @@ class _AutoButton extends StatelessWidget {
 class _NoteReadout extends StatelessWidget {
   final TunerReading reading;
   final TunerEngine engine;
+  final Instrument instrument;
   final bool listening;
   final String? error;
   final bool toneOn;
@@ -583,6 +673,7 @@ class _NoteReadout extends StatelessWidget {
   const _NoteReadout({
     required this.reading,
     required this.engine,
+    required this.instrument,
     required this.listening,
     required this.error,
     required this.toneOn,
@@ -617,8 +708,17 @@ class _NoteReadout extends StatelessWidget {
     } else if (locked != null) {
       hint = 'Play the ${engine.tuning.label(locked)} string';
     } else {
-      hint = 'Pluck any string';
+      // A violin is as likely bowed as plucked.
+      hint = instrument.head == HeadShape.scroll
+          ? 'Play any string'
+          : 'Pluck any string';
     }
+    // Tuning a bass string by ear: say why the note sounds high.
+    final octaveNote =
+        instrument.referenceOctaveUp &&
+        locked != null &&
+        !engine.chromatic &&
+        !active;
 
     final (String statusText, IconData? statusIcon) = switch (reading.status) {
       TunerStatus.inTune => ('In tune', Icons.check_rounded),
@@ -636,6 +736,9 @@ class _NoteReadout extends StatelessWidget {
       label: active
           ? '${noteName(midi!, flats: flats)}, $statusText'
                 '${cents != null ? ', ${cents.round()} cents' : ''}'
+          : octaveNote
+          ? '$statusText. The note is played an octave higher so your '
+                'speaker can sound it.'
           : statusText,
       excludeSemantics: true,
       child: Column(
@@ -726,15 +829,21 @@ class _NoteReadout extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          Text(
-            active && cents != null && reading.hz != null
-                ? '${cents >= 0 ? '+' : '−'}${cents.abs().toStringAsFixed(cents.abs() < 10 ? 1 : 0)} cents'
-                      '  ·  ${reading.hz!.toStringAsFixed(1)} Hz'
-                : ' ',
-            style: TextStyle(
-              color: c.textMuted,
-              fontSize: 13,
-              fontFeatures: tabular,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              active && cents != null && reading.hz != null
+                  ? '${cents >= 0 ? '+' : '−'}${cents.abs().toStringAsFixed(cents.abs() < 10 ? 1 : 0)} cents'
+                        '  ·  ${reading.hz!.toStringAsFixed(1)} Hz'
+                  : octaveNote
+                  ? 'Played an octave higher so your speaker can sound it'
+                  : ' ',
+              maxLines: 1,
+              style: TextStyle(
+                color: c.textMuted,
+                fontSize: 13,
+                fontFeatures: tabular,
+              ),
             ),
           ),
         ],
@@ -747,6 +856,7 @@ class _BottomBar extends StatelessWidget {
   final bool chromatic;
   final bool auto;
   final bool allTuned;
+  final int stringCount;
   final bool toneOn;
   final String? noteLabel;
   final VoidCallback onPlay;
@@ -756,6 +866,7 @@ class _BottomBar extends StatelessWidget {
     required this.chromatic,
     required this.auto,
     required this.allTuned,
+    required this.stringCount,
     required this.toneOn,
     required this.noteLabel,
     required this.onPlay,
@@ -783,7 +894,7 @@ class _BottomBar extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'All six strings in tune',
+                'All $stringCount strings in tune',
                 style: TextStyle(
                   color: c.textPrimary,
                   fontSize: 14.5,
@@ -852,15 +963,26 @@ class _BottomBar extends StatelessWidget {
   }
 }
 
-/// Tunings, chromatic mode and the A4 reference.
+/// Instrument, its tunings, chromatic mode and the A4 reference.
 class _TuningSheet extends StatefulWidget {
+  final Instrument instrument;
+
+  /// Each instrument's last tuning (instrument id → tuning id).
+  final Map<String, String> lastTuning;
   final GuitarTuning tuning;
   final bool chromatic;
   final double a4;
-  final void Function({GuitarTuning? tuning, bool? chromatic, double? a4})
+  final void Function({
+    Instrument? instrument,
+    GuitarTuning? tuning,
+    bool? chromatic,
+    double? a4,
+  })
   onChanged;
 
   const _TuningSheet({
+    required this.instrument,
+    required this.lastTuning,
     required this.tuning,
     required this.chromatic,
     required this.a4,
@@ -872,9 +994,25 @@ class _TuningSheet extends StatefulWidget {
 }
 
 class _TuningSheetState extends State<_TuningSheet> {
+  late Instrument _instrument = widget.instrument;
   late GuitarTuning _tuning = widget.tuning;
   late bool _chromatic = widget.chromatic;
   late int _a4 = widget.a4.round();
+
+  /// Switches instrument straight away, to the tuning it last had; the
+  /// sheet stays open to pick another.
+  void _pickInstrument(Instrument i) {
+    if (i.id == _instrument.id && !_chromatic) return;
+    Haptics.selection();
+    setState(() {
+      if (i.id != _instrument.id) {
+        _instrument = i;
+        _tuning = i.tuningById(widget.lastTuning[i.id]);
+      }
+      _chromatic = false;
+    });
+    widget.onChanged(instrument: i, tuning: _tuning, chromatic: false);
+  }
 
   void _pick(GuitarTuning? t) {
     Haptics.selection();
@@ -973,7 +1111,9 @@ class _TuningSheetState extends State<_TuningSheet> {
                 ),
               ),
             ),
-            for (final t in guitarTunings)
+            _InstrumentPicker(selected: _instrument, onPick: _pickInstrument),
+            const SizedBox(height: 10),
+            for (final t in _instrument.tunings)
               row(
                 title: t.name,
                 subtitle: t.letters,
@@ -982,7 +1122,9 @@ class _TuningSheetState extends State<_TuningSheet> {
               ),
             row(
               title: 'Chromatic',
-              subtitle: 'Any note, any instrument',
+              subtitle: _instrument.id == guitar.id
+                  ? 'Any note, any instrument'
+                  : _chromaticRange(_instrument, _tuning),
               selected: _chromatic,
               onTap: () => _pick(null),
             ),
@@ -1057,6 +1199,78 @@ class _TuningSheetState extends State<_TuningSheet> {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Guitar · Ukulele · Bass · Violin, as one segmented row.
+class _InstrumentPicker extends StatelessWidget {
+  final Instrument selected;
+  final ValueChanged<Instrument> onPick;
+
+  const _InstrumentPicker({required this.selected, required this.onPick});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = Theme.of(context).extension<AppColors>()!;
+    final p = TunerPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: c.surfaceElevated.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: c.borderSubtle),
+      ),
+      child: Row(
+        children: [
+          for (final i in instruments)
+            Expanded(
+              child: Semantics(
+                button: true,
+                selected: i.id == selected.id,
+                child: Material(
+                  color: i.id == selected.id
+                      ? p.accent.withValues(alpha: p.dark ? 0.26 : 0.14)
+                      : Colors.transparent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: i.id == selected.id
+                        ? BorderSide(color: p.accent, width: 1.5)
+                        : BorderSide.none,
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () => onPick(i),
+                    child: SizedBox(
+                      height: 48,
+                      child: Center(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: Text(
+                              i.name,
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: i.id == selected.id
+                                    ? c.textPrimary
+                                    : c.textSecondary,
+                                fontSize: 14,
+                                fontWeight: i.id == selected.id
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

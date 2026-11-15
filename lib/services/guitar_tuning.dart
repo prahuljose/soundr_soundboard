@@ -52,20 +52,69 @@ double centsOff(double hz, int midi, {double a4 = 440}) =>
 
 // ── Tunings ─────────────────────────────────────────────────────────────────
 
+/// The pitch range the detector listens for. A lower [minHz] needs a longer
+/// analysis window (more latency, more work), so each instrument gets the
+/// narrowest range that still hears a badly out-of-tune string.
+class DetectorConfig {
+  final double minHz;
+  final double maxHz;
+
+  /// See [PitchDetector.downsample].
+  final int downsample;
+
+  const DetectorConfig(this.minHz, this.maxHz, {this.downsample = 2});
+
+  PitchDetector build({
+    required int sampleRate,
+    required void Function(PitchReading?) onReading,
+  }) => PitchDetector(
+    sampleRate: sampleRate,
+    minHz: minHz,
+    maxHz: maxHz,
+    downsample: downsample,
+    onReading: onReading,
+  );
+}
+
+/// One way of tuning an instrument's strings. (Named for the guitar, which
+/// came first; it serves every instrument.)
 class GuitarTuning {
   final String id;
   final String name;
 
-  /// MIDI notes, low (6th) string to high (1st) string.
+  /// MIDI notes in the order the strings sit on the instrument, from the
+  /// highest-numbered string to string 1 — for a guitar that's low E (6th)
+  /// to high E (1st). NOT necessarily ascending: a ukulele's 4th string is
+  /// a high G ("re-entrant" tuning).
   final List<int> strings;
   final bool flats;
 
-  const GuitarTuning(this.id, this.name, this.strings, {this.flats = false});
+  /// Overrides the instrument's detector range (e.g. cello among violins).
+  final DetectorConfig? detector;
+
+  const GuitarTuning(
+    this.id,
+    this.name,
+    this.strings, {
+    this.flats = false,
+    this.detector,
+  });
 
   /// "E A D G B E"
   String get letters => strings.map((m) => noteName(m, flats: flats)).join(' ');
 
   String label(int index) => noteName(strings[index], flats: flats);
+
+  /// The number players use: 1 is the last string in [strings].
+  int stringNumber(int index) => strings.length - index;
+
+  /// Whether the strings rise in pitch all the way across.
+  bool get reentrant {
+    for (var i = 1; i < strings.length; i++) {
+      if (strings[i] <= strings[i - 1]) return true;
+    }
+    return false;
+  }
 }
 
 // E2=40 A2=45 D3=50 G3=55 B3=59 E4=64
@@ -87,10 +136,137 @@ const guitarTunings = [
   GuitarTuning('dadgad', 'DADGAD', [38, 45, 50, 55, 57, 62]),
 ];
 
-GuitarTuning tuningById(String? id) => guitarTunings.firstWhere(
-  (t) => t.id == id,
-  orElse: () => guitarTunings.first,
+/// A guitar tuning by id (standard if unknown).
+GuitarTuning tuningById(String? id) => guitar.tuningById(id);
+
+// G3=55 C4=60 E4=64 G4=67 A4=69. String 4 first, as on the instrument.
+const ukuleleTunings = [
+  GuitarTuning('uke_standard', 'Standard', [67, 60, 64, 69]),
+  GuitarTuning('uke_low_g', 'Low G', [55, 60, 64, 69]),
+  GuitarTuning('uke_baritone', 'Baritone', [50, 55, 59, 64]),
+  GuitarTuning('uke_d', 'D tuning', [69, 62, 66, 71]),
+];
+
+// B0=23 E1=28 A1=33 D2=38 G2=43
+const bassTunings = [
+  GuitarTuning('bass_standard', 'Standard', [28, 33, 38, 43]),
+  GuitarTuning('bass_drop_d', 'Drop D', [26, 33, 38, 43]),
+  GuitarTuning('bass_5', '5-string', [23, 28, 33, 38, 43]),
+];
+
+// The violin family, all in fifths. G3=55 D4=62 A4=69 E5=76
+const violinTunings = [
+  GuitarTuning('violin', 'Violin', [55, 62, 69, 76]),
+  GuitarTuning('viola', 'Viola', [48, 55, 62, 69]),
+  GuitarTuning('cello', 'Cello', [
+    36,
+    43,
+    50,
+    57,
+  ], detector: DetectorConfig(55, 1400)),
+];
+
+/// How the tuner draws the top of the instrument.
+enum HeadShape {
+  /// Flat headstock with a shaped crown.
+  guitar,
+
+  /// Small flat headstock with a rounded top.
+  ukulele,
+
+  /// Broad, square-shouldered headstock.
+  bass,
+
+  /// Pegbox and scroll, pegs staggered.
+  scroll,
+}
+
+class Instrument {
+  final String id;
+  final String name;
+  final List<GuitarTuning> tunings;
+  final DetectorConfig detector;
+  final HeadShape head;
+
+  /// The tunings are instruments in their own right (violin, viola, cello),
+  /// so a tuning's name stands alone instead of "Violin · Viola".
+  final bool family;
+
+  /// Reference notes play an octave up: a phone speaker can't sound a bass.
+  final bool referenceOctaveUp;
+
+  const Instrument(
+    this.id,
+    this.name,
+    this.tunings, {
+    required this.detector,
+    required this.head,
+    this.family = false,
+    this.referenceOctaveUp = false,
+  });
+
+  GuitarTuning tuningById(String? id) =>
+      tunings.firstWhere((t) => t.id == id, orElse: () => tunings.first);
+
+  DetectorConfig detectorFor(GuitarTuning tuning) =>
+      tuning.detector ?? detector;
+
+  /// "Ukulele · Low G", or just "Cello" in a family.
+  String titleFor(GuitarTuning tuning) =>
+      family ? tuning.name : '$name · ${tuning.name}';
+
+  /// The frequency to play as the reference for [midi].
+  double referenceHz(int midi, {double a4 = 440}) =>
+      midiToHz(midi, a4: a4) * (referenceOctaveUp ? 2 : 1);
+}
+
+/// 60–1400 Hz: room below drop C (65.4 Hz) up to the high E's top frets.
+const guitar = Instrument(
+  'guitar',
+  'Guitar',
+  guitarTunings,
+  detector: DetectorConfig(60, 1400),
+  head: HeadShape.guitar,
 );
+
+/// Nothing lower than the baritone's D3 (147 Hz), so a short window: about
+/// half the guitar's latency.
+const ukulele = Instrument(
+  'ukulele',
+  'Ukulele',
+  ukuleleTunings,
+  detector: DetectorConfig(110, 1600),
+  head: HeadShape.ukulele,
+);
+
+/// Down to a slack low B (B0 = 30.9 Hz). Analysed at a quarter of the
+/// sample rate, which keeps the long window as cheap as the guitar's.
+const bass = Instrument(
+  'bass',
+  'Bass',
+  bassTunings,
+  detector: DetectorConfig(26, 400, downsample: 4),
+  head: HeadShape.bass,
+  referenceOctaveUp: true,
+);
+
+/// Viola C3 (131 Hz) up past the violin's E5 (659 Hz). Analysed at the
+/// full sample rate: at half rate a bright bowed note high on the E string
+/// reads several cents out.
+const violin = Instrument(
+  'violin',
+  'Violin',
+  violinTunings,
+  detector: DetectorConfig(110, 2000, downsample: 1),
+  head: HeadShape.scroll,
+  family: true,
+);
+
+const instruments = [guitar, ukulele, bass, violin];
+
+/// An instrument by id (guitar if unknown).
+Instrument instrumentById(String? id) =>
+    instruments.firstWhere((i) => i.id == id, orElse: () => guitar);
 
 // ── Tuner engine ────────────────────────────────────────────────────────────
 
@@ -106,7 +282,7 @@ enum TunerStatus {
 class TunerReading {
   final TunerStatus status;
 
-  /// String index (0 = low string) being tuned, or null in chromatic mode.
+  /// Index into the tuning's strings, or null in chromatic mode.
   final int? stringIndex;
 
   /// The note being tuned to.
@@ -143,7 +319,7 @@ class TunerEngine {
   GuitarTuning tuning;
   double a4;
 
-  /// Tune to every note instead of the guitar's strings.
+  /// Tune to every note instead of the instrument's strings.
   bool chromatic;
 
   /// Manual mode: the string chosen on the headstock. Null = auto.
@@ -200,6 +376,7 @@ class TunerEngine {
 
   void resetTuned() => tuned.clear();
 
+  /// Every string of the current tuning, however many it has.
   bool get allTuned => !chromatic && tuned.length == tuning.strings.length;
 
   /// Feeds one detector result at time [nowMs]. Returns the new reading.
@@ -288,7 +465,8 @@ class TunerEngine {
   }
 
   /// Closest string, with a little stickiness so a string that's half way
-  /// between two targets doesn't flicker between them.
+  /// between two targets doesn't flicker between them. Strings may be in
+  /// any pitch order (re-entrant ukulele), so every one is compared.
   int _nearestString(double m) {
     var best = 0;
     for (var i = 1; i < tuning.strings.length; i++) {
