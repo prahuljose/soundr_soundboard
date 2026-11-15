@@ -30,6 +30,9 @@ class SoundButton extends StatefulWidget {
   final bool loopEnabled;
   /// The sound is looping right now (tap again to stop).
   final bool looping;
+  /// Screen-reader hint for the long-press the parent attaches (TalkBack
+  /// reads it as "double-tap and hold to …"). Null when there is none.
+  final String? longPressHint;
 
   const SoundButton({
     super.key,
@@ -47,6 +50,7 @@ class SoundButton extends StatefulWidget {
     this.speed = 1.0,
     this.loopEnabled = false,
     this.looping = false,
+    this.longPressHint,
   });
 
   @override
@@ -259,7 +263,8 @@ class _SoundButtonState extends State<SoundButton>
     return Semantics(
       button: true,
       label: _semanticsLabel,
-      onTapHint: 'Play sound',
+      onTapHint: widget.looping ? 'stop the loop' : 'play',
+      onLongPressHint: widget.longPressHint,
       child: GestureDetector(
         onTapDown: (_) => _handleTap(),
         child: ScaleTransition(
@@ -415,7 +420,8 @@ class _SoundButtonState extends State<SoundButton>
     );
   }
 
-  /// Spoken description for screen readers — name, category, and length.
+  /// Spoken description for screen readers — name, category, length, then
+  /// speed / loop / playing / favourite state.
   /// The visual emoji/name/duration are wrapped in [ExcludeSemantics] so this
   /// is the single, clean announcement instead of a pile of fragments.
   String get _semanticsLabel {
@@ -424,11 +430,17 @@ class _SoundButtonState extends State<SoundButton>
     if (widget.duration > 0) {
       buffer.write(', ${_length.toStringAsFixed(1)} seconds');
     }
-    if (widget.speed != 1.0) buffer.write(', ${widget.speed} times speed');
+    if (widget.speed != 1.0) {
+      final speed = widget.speed == widget.speed.roundToDouble()
+          ? '${widget.speed.toInt()}'
+          : '${widget.speed}';
+      buffer.write(', $speed times speed');
+    }
     if (widget.looping) {
-      buffer.write(', looping, tap to stop');
-    } else if (widget.loopEnabled) {
-      buffer.write(', loops');
+      buffer.write(', looping');
+    } else {
+      if (widget.loopEnabled) buffer.write(', loop on');
+      if (_isPlaying) buffer.write(', playing');
     }
     if (widget.isFavorited) buffer.write(', favorited');
     if (widget.playCount > 0) {

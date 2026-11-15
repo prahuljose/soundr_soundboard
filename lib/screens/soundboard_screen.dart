@@ -28,7 +28,9 @@ import '../widgets/sound_sheet.dart';
 import 'clip_editor_screen.dart';
 import 'decibel_screen.dart';
 import 'guitar_tuner_screen.dart';
+import 'performance_screen.dart';
 import 'reverse_challenge_screen.dart';
+import 'sing_note_screen.dart';
 import 'speaker_cleaner_screen.dart';
 import 'tone_generator_screen.dart';
 import 'voice_changer_screen.dart';
@@ -574,7 +576,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                 spacing: 8, runSpacing: 8,
                 children: _sceneEmojis.map((e) {
                   final sel = e == selectedEmoji;
-                  return GestureDetector(
+                  return Semantics(button: true, selected: sel, label: 'Board icon', child: GestureDetector(
                     onTap: () => setSheetState(() => selectedEmoji = e),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 120),
@@ -594,7 +596,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       ),
                       child: Text(e, style: const TextStyle(fontSize: 22)),
                     ),
-                  );
+                  ));
                 }).toList(),
               ),
               const SizedBox(height: 16),
@@ -646,6 +648,60 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     );
   }
 
+  /// The sets performance mode can show: favourites, each board, the most
+  /// played, and everything. Empty sets are left out.
+  List<PerformanceSet> _performanceSets() {
+    final all = _allSounds;
+    final byId = {for (final s in all) s.id: s};
+    final mostPlayed = all.where((s) => (_playCounts[s.id] ?? 0) > 0).toList()
+      ..sort((a, b) => (_playCounts[b.id] ?? 0).compareTo(_playCounts[a.id] ?? 0));
+    final sets = <PerformanceSet>[
+      PerformanceSet(
+        id: 'favourites',
+        name: 'Favourites',
+        emoji: '⭐',
+        sounds: all.where((s) => _favorites.contains(s.id)).toList(),
+      ),
+      for (final scene in _scenes)
+        PerformanceSet(
+          id: 'board_${scene.id}',
+          name: scene.name,
+          emoji: scene.emoji,
+          sounds: [
+            for (final id in _sceneSoundIds[scene.id] ?? const <String>{})
+              if (byId[id] != null) byId[id]!,
+          ],
+        ),
+      PerformanceSet(
+        id: 'most_played',
+        name: 'Most played',
+        emoji: '🔥',
+        sounds: mostPlayed.take(24).toList(),
+      ),
+      if (_userClips.isNotEmpty)
+        PerformanceSet(id: 'my_clips', name: 'My Clips', emoji: '🎙️', sounds: _userClips),
+      PerformanceSet(id: 'all', name: 'All sounds', emoji: '🔊', sounds: all),
+    ];
+    return sets.where((s) => s.sounds.isNotEmpty).toList();
+  }
+
+  Future<void> _openPerformance({String? initialSetId}) async {
+    Haptics.light();
+    await _stopAll();
+    if (!mounted) return;
+    final sets = _performanceSets();
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PerformanceScreen(
+          sets: sets,
+          initialSetId: sets.any((s) => s.id == initialSetId) ? initialSetId : null,
+          preloaded: _preloaded,
+        ),
+      ),
+    );
+  }
+
   void _showSceneOptions(SceneModel scene) {
     showModalBottomSheet(
       context: context,
@@ -677,6 +733,14 @@ class _SoundboardScreenState extends State<SoundboardScreen>
             ),
             const SizedBox(height: 16),
             Divider(color: Theme.of(context).extension<AppColors>()!.border, height: 1),
+            _SheetOption(
+              icon: Icons.grid_on_rounded,
+              label: 'Perform this board',
+              onTap: () {
+                Navigator.pop(ctx);
+                _openPerformance(initialSetId: 'board_${scene.id}');
+              },
+            ),
             _SheetOption(
               icon: Icons.edit_rounded,
               label: 'Rename board',
@@ -731,7 +795,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                 spacing: 8, runSpacing: 8,
                 children: _sceneEmojis.map((e) {
                   final sel = e == selectedEmoji;
-                  return GestureDetector(
+                  return Semantics(button: true, selected: sel, label: 'Board icon', child: GestureDetector(
                     onTap: () => setSheetState(() => selectedEmoji = e),
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 120),
@@ -751,7 +815,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       ),
                       child: Text(e, style: const TextStyle(fontSize: 22)),
                     ),
-                  );
+                  ));
                 }).toList(),
               ),
               const SizedBox(height: 16),
@@ -879,7 +943,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
               ..._scenes.map((scene) {
                 final inScene =
                     _sceneSoundIds[scene.id]?.contains(sound.id) ?? false;
-                return InkWell(
+                return Semantics(button: true, checked: inScene, child: InkWell(
                   onTap: () async {
                     if (inScene) {
                       await ClipRepository.removeSoundFromScene(
@@ -926,7 +990,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       ),
                     ]),
                   ),
-                );
+                ));
               }),
               const SizedBox(height: 8),
             ],
@@ -1241,7 +1305,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                     )),
                     const Spacer(),
                     if (totalPlays > 0)
-                      GestureDetector(
+                      Semantics(button: true, label: 'Clear all stats', child: GestureDetector(
                         onTap: () async {
                           Navigator.pop(ctx);
                           final confirmed = await showDialog<bool>(
@@ -1268,13 +1332,14 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                         },
                         child: const Text(
                           'Clear all',
+                          semanticsLabel: '',
                           style: TextStyle(
                             color: Colors.redAccent,
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                      ),
+                      )),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -1302,7 +1367,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
                 if (top5.isNotEmpty) ...[
                   const SizedBox(height: 24),
-                  Builder(builder: (ctx) => Text(
+                  Semantics(header: true, child: Builder(builder: (ctx) => Text(
                     'TOP SOUNDS',
                     style: TextStyle(
                       color: Theme.of(ctx).extension<AppColors>()!.textMuted,
@@ -1310,7 +1375,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       fontWeight: FontWeight.w600,
                       letterSpacing: 1.2,
                     ),
-                  )),
+                  ))),
                   const SizedBox(height: 10),
                   ...top5.asMap().entries.map((e) {
                     final rank = e.key + 1;
@@ -1708,6 +1773,13 @@ class _SoundboardScreenState extends State<SoundboardScreen>
     Color(0xFFB0BEC5), // light grey
   ];
 
+  /// Spoken names for [_colorSwatches], in the same order.
+  static const _colorSwatchNames = [
+    'Purple', 'Sky blue', 'Teal', 'Green', 'Lime green', 'Yellow', 'Amber',
+    'Orange', 'Red', 'Pink', 'Lavender pink', 'Violet', 'Light blue',
+    'Blue grey', 'Light grey',
+  ];
+
   Future<void> _showColorPicker(SoundModel clip) async {
     await showModalBottomSheet(
       context: context,
@@ -1745,7 +1817,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                 runSpacing: 12,
                 children: [
                   // Reset to default option
-                  GestureDetector(
+                  Semantics(button: true, selected: clip.customColor == null, label: 'Default colour', child: GestureDetector(
                     onTap: () async {
                       Navigator.pop(ctx);
                       await _setClipColor(clip, null);
@@ -1769,10 +1841,10 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                             color: sc.iconSecondary, size: 18),
                       );
                     }),
-                  ),
+                  )),
                   ..._colorSwatches.map((color) {
                     final selected = clip.customColor == color.toARGB32();
-                    return GestureDetector(
+                    return Semantics(button: true, selected: selected, label: _colorSwatchNames[_colorSwatches.indexOf(color)], child: GestureDetector(
                       onTap: () async {
                         Navigator.pop(ctx);
                         await _setClipColor(clip, color.toARGB32());
@@ -1795,7 +1867,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                               : [],
                         ),
                       ),
-                    );
+                    ));
                   }),
                 ],
               ),
@@ -1981,8 +2053,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
           HubItem(
             icon: Icons.music_note_rounded,
             color: const Color(0xFF7DDB86),
-            title: 'Guitar tuner',
-            subtitle: 'Pluck a string, tune it by ear or eye',
+            title: 'Tuner',
+            subtitle: 'Guitar, ukulele, bass and violin',
             onOpen: () => _open(const GuitarTunerScreen()),
           ),
           HubItem(
@@ -2070,6 +2142,13 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         subtitle: 'Copy your voice backwards and see how close you get',
         onOpen: () => _open(const ReverseChallengeScreen()),
       ),
+      singNote: HubItem(
+        icon: Icons.mic_external_on_rounded,
+        color: const Color(0xFFFFB86B),
+        title: 'Sing the Note',
+        subtitle: 'Hear a note, sing it back, hold it in tune',
+        onOpen: () => _open(const SingNoteScreen()),
+      ),
       pairMatch: HubItem(
         icon: Icons.grid_on_rounded,
         color: const Color(0xFF7DDB86),
@@ -2123,7 +2202,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
               child: Row(children: [
-                GestureDetector(
+                Semantics(image: true, label: 'Soundr logo', child: GestureDetector(
                   onTap: () {
                     final now = DateTime.now();
                     if (_lastLogoTap == null ||
@@ -2148,10 +2227,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       border: Border.all(color: currentAccent.withValues(alpha: 0.30)),
                     ),
                     child: const Center(
-                      child: Text('🔊', style: TextStyle(fontSize: 22)),
+                      child: ExcludeSemantics(
+                          child: Text('🔊', style: TextStyle(fontSize: 22))),
                     ),
                   ),
-                ),
+                )),
                 const SizedBox(width: 12),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2239,7 +2319,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                     _DrawerSectionLabel('TOOLS'),
                     _DrawerItem(
                       icon: Icons.music_note_rounded,
-                      label: 'Guitar Tuner',
+                      label: 'Tuner',
                       onTap: () => nav(const GuitarTunerScreen()),
                     ),
                     _DrawerItem(
@@ -2289,6 +2369,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       icon: Icons.swap_horiz_rounded,
                       label: 'Reverse Challenge',
                       onTap: () => nav(const ReverseChallengeScreen()),
+                    ),
+                    _DrawerItem(
+                      icon: Icons.mic_external_on_rounded,
+                      label: 'Sing the Note',
+                      onTap: () => nav(const SingNoteScreen()),
                     ),
                     _DrawerItem(
                       icon: Icons.bolt_rounded,
@@ -2377,6 +2462,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
               ? [
                   IconButton(
                     icon: Icon(Icons.close, color: c.textSecondary),
+                    tooltip: 'Close search',
                     onPressed: _closeSearch,
                   ),
                 ]
@@ -2385,6 +2471,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                     icon: Icon(Icons.search_rounded, color: c.textPrimary),
                     tooltip: 'Search',
                     onPressed: _openSearch,
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.grid_on_rounded, color: c.textPrimary),
+                    tooltip: 'Performance mode',
+                    onPressed: () => _openPerformance(),
                   ),
                   IconButton(
                     icon: Icon(Icons.bar_chart_rounded, color: c.textPrimary),
@@ -2420,7 +2511,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
 
                 // ── "New board" chip ──────────────────────────────────
                 if (cat == '__new_scene__') {
-                  return GestureDetector(
+                  return Semantics(button: true, label: 'New board', child: GestureDetector(
                     onTap: _showCreateSceneDialog,
                     child: Container(
                       height: 36,
@@ -2434,7 +2525,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                         ),
                       ),
                       alignment: Alignment.center,
-                      child: Row(
+                      child: ExcludeSemantics(child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(Icons.add_rounded,
@@ -2450,9 +2541,9 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                             ),
                           ),
                         ],
-                      ),
+                      )),
                     ),
-                  );
+                  ));
                 }
 
                 // ── Scene / board chip ────────────────────────────────
@@ -2464,7 +2555,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                   final active = cat == _selectedCategory;
                   final soundCount =
                       _sceneSoundIds[sceneId]?.length ?? 0;
-                  return GestureDetector(
+                  return Semantics(button: true, selected: active, label: '${scene.name} board, $soundCount ${soundCount == 1 ? 'sound' : 'sounds'}', onLongPressHint: 'rename or delete this board', child: GestureDetector(
                     onTap: () =>
                         setState(() => _selectedCategory = cat),
                     onLongPress: () => _showSceneOptions(scene),
@@ -2483,7 +2574,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                         ),
                       ),
                       alignment: Alignment.center,
-                      child: Row(
+                      child: ExcludeSemantics(child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(scene.emoji,
@@ -2511,9 +2602,9 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                             ),
                           ],
                         ],
-                      ),
+                      )),
                     ),
-                  );
+                  ));
                 }
 
                 // ── Standard category chip ────────────────────────────
@@ -2526,7 +2617,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                                     .where((s) => s.category == cat)
                                     .length,
                 };
-                return GestureDetector(
+                return Semantics(button: true, selected: active, label: count == null ? '$cat sounds' : '$cat, $count ${count == 1 ? 'sound' : 'sounds'}', child: GestureDetector(
                   onTap: () => setState(() => _selectedCategory = cat),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
@@ -2539,7 +2630,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                       ),
                     ),
                     alignment: Alignment.center,
-                    child: Row(
+                    child: ExcludeSemantics(child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
@@ -2564,9 +2655,9 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                           ),
                         ],
                       ],
-                    ),
+                    )),
                   ),
-                );
+                ));
               },
             ),
           ),
@@ -2639,6 +2730,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                               speed: SoundPrefs.speedOf(sound.id),
                               loopEnabled: SoundPrefs.loops(sound.id),
                               looping: _loopHandles.containsKey(sound.id),
+                              longPressHint: 'show options',
                             ),
                           );
                         },
@@ -2694,6 +2786,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(scene.emoji,
+                semanticsLabel: '',
                 style: TextStyle(
                     fontSize: 48,
                     color: c.textPrimary.withValues(alpha: 0.15))),
@@ -2708,6 +2801,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
             const SizedBox(height: 8),
             Text(
               'Long-press any sound → Manage boards',
+              semanticsLabel:
+                  'Long-press any sound, then choose Manage boards',
               style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
@@ -2735,6 +2830,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
             const SizedBox(height: 8),
             Text(
               'Tap ★ on any sound to save it here',
+              semanticsLabel: 'Tap the star on any sound to save it here',
               style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
@@ -2762,6 +2858,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
             const SizedBox(height: 8),
             Text(
               'Tap 🎤 to record or 📂 to import a sound',
+              semanticsLabel:
+                  'Use the Record or Import buttons to add a sound',
               style: TextStyle(color: c.textMuted, fontSize: 13),
             ),
           ],
@@ -2782,7 +2880,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Text(
+          child: Semantics(header: true, child: Text(
             'RECENTLY PLAYED',
             style: TextStyle(
               color: c.textMuted,
@@ -2790,7 +2888,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
               fontWeight: FontWeight.w600,
               letterSpacing: 1.2,
             ),
-          ),
+          )),
         ),
         const SizedBox(height: 8),
         SizedBox(
@@ -2802,7 +2900,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
             separatorBuilder: (context, i) => const SizedBox(width: 6),
             itemBuilder: (context, i) {
               final sound = _recentlyPlayed[i];
-              return GestureDetector(
+              return Semantics(button: true, label: 'Play ${sound.name}', child: GestureDetector(
                 onTapDown: (_) {
                   Haptics.selection();
                   _play(sound);
@@ -2814,7 +2912,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(color: c.textPrimary.withValues(alpha: 0.08)),
                   ),
-                  child: Row(
+                  child: ExcludeSemantics(child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(sound.emoji,
@@ -2829,9 +2927,9 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                         ),
                       ),
                     ],
-                  ),
+                  )),
                 ),
-              );
+              ));
             },
           ),
         ),
@@ -2852,6 +2950,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         // Randomize
         FloatingActionButton(
           heroTag: 'random',
+          tooltip: 'Play a random sound',
           onPressed: _playRandom,
           backgroundColor: c.surfaceCard,
           elevation: 0,
@@ -2864,6 +2963,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         // Import audio (file or URL)
         FloatingActionButton(
           heroTag: 'import',
+          tooltip: 'Import a sound',
           onPressed: _showImportOptions,
           backgroundColor: c.surfaceCard,
           elevation: 0,
@@ -2876,6 +2976,7 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         // Record
         FloatingActionButton(
           heroTag: 'record',
+          tooltip: 'Record a sound',
           onPressed: _openRecorder,
           backgroundColor: c.surfaceCard,
           shape: CircleBorder(
@@ -2909,11 +3010,11 @@ class _SoundboardScreenState extends State<SoundboardScreen>
         clipBehavior: Clip.antiAlias,
         child: Material(
           color: Colors.transparent,
-          child: InkWell(
+          child: Semantics(button: true, toggled: isActive, label: 'Stop-on-tap: a new sound stops the others', child: InkWell(
             onTap: _toggleStopOnTap,
             splashColor: isActive ? Colors.white24 : Colors.black12,
             highlightColor: Colors.transparent,
-            child: Row(
+            child: ExcludeSemantics(child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 SizedBox(
@@ -2951,8 +3052,8 @@ class _SoundboardScreenState extends State<SoundboardScreen>
                   ),
                 ),
               ],
-            ),
-          ),
+            )),
+          )),
         ),
       ),
     );
@@ -3062,7 +3163,7 @@ class _DrawerItem extends StatelessWidget {
     final c = Theme.of(context).extension<AppColors>()!;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: InkWell(
+      child: Semantics(button: true, selected: active, child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Container(
@@ -3084,7 +3185,7 @@ class _DrawerItem extends StatelessWidget {
                 )),
           ]),
         ),
-      ),
+      )),
     );
   }
 }
@@ -3108,7 +3209,7 @@ class _SheetOption extends StatelessWidget {
   Widget build(BuildContext context) {
     final effectiveColor =
         color ?? Theme.of(context).extension<AppColors>()!.textPrimary;
-    return InkWell(
+    return Semantics(button: true, child: InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
@@ -3120,7 +3221,7 @@ class _SheetOption extends StatelessWidget {
                   color: effectiveColor, fontSize: 16, fontWeight: FontWeight.w500)),
         ]),
       ),
-    );
+    ));
   }
 }
 
@@ -3240,7 +3341,7 @@ class _DrawerSectionLabel extends StatelessWidget {
     final c = Theme.of(context).extension<AppColors>()!;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-      child: Text(
+      child: Semantics(header: true, child: Text(
         text,
         style: TextStyle(
           fontSize: 11,
@@ -3248,7 +3349,7 @@ class _DrawerSectionLabel extends StatelessWidget {
           letterSpacing: 1.2,
           color: c.textMuted,
         ),
-      ),
+      )),
     );
   }
 }

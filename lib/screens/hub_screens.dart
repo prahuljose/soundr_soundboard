@@ -869,6 +869,7 @@ class GamesHub extends StatefulWidget {
   final HubItem speedRound;
   final HubItem pairMatch;
   final HubItem reverseChallenge;
+  final HubItem singNote;
   final List<HubItem> morseGames;
 
   const GamesHub({
@@ -876,6 +877,7 @@ class GamesHub extends StatefulWidget {
     required this.speedRound,
     required this.pairMatch,
     required this.reverseChallenge,
+    required this.singNote,
     required this.morseGames,
   });
 
@@ -887,6 +889,7 @@ class _GamesHubState extends State<GamesHub> {
   String? _speedBest;
   String? _pairBest;
   String? _reverseBest;
+  String? _singBest;
 
   @override
   void initState() {
@@ -911,15 +914,17 @@ class _GamesHubState extends State<GamesHub> {
         break;
       }
     }
-    int? reverse;
+    int? reverse, sing;
     try {
       reverse = await ClipRepository.getInt('reverse_best');
+      sing = await ClipRepository.getInt('sing_note_best');
     } catch (_) {}
     if (!mounted) return;
     setState(() {
       _speedBest = score == null ? null : '$score pts';
       _pairBest = pair;
       _reverseBest = reverse == null ? null : '$reverse% match';
+      _singBest = sing == null ? null : '$sing / 100';
     });
   }
 
@@ -944,6 +949,8 @@ class _GamesHubState extends State<GamesHub> {
         _GameCard(item: _refreshing(widget.pairMatch), best: _pairBest),
         const SizedBox(height: 12),
         _GameCard(item: _refreshing(widget.reverseChallenge), best: _reverseBest),
+        const SizedBox(height: 12),
+        _GameCard(item: _refreshing(widget.singNote), best: _singBest),
         const _HubLabel('MORSE GAMES'),
         _TileGrid(items: widget.morseGames),
       ],

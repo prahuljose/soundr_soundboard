@@ -7,7 +7,7 @@ import 'package:flutter/scheduler.dart';
 import '../services/guitar_tuning.dart';
 import '../theme/app_colors.dart';
 
-/// Guitar tuner colours, tuned for contrast in light and dark mode.
+/// Tuner colours, tuned for contrast in light and dark mode.
 class TunerPalette {
   final Color good; // in tune
   final Color warn; // flat / sharp
@@ -58,7 +58,9 @@ class TunerGauge extends StatefulWidget {
 
 class _TunerGaugeState extends State<TunerGauge>
     with SingleTickerProviderStateMixin {
-  late final Ticker _ticker = createTicker(_tick);
+  // Created in initState, not lazily: a gauge that never moved would
+  // otherwise first ask for its ticker in dispose().
+  late final Ticker _ticker;
   Duration _last = Duration.zero;
   double _value = 0; // shown needle position, cents (clamped ±55)
   double _glow = 0; // 0..1 in-tune glow
@@ -73,6 +75,7 @@ class _TunerGaugeState extends State<TunerGauge>
   @override
   void initState() {
     super.initState();
+    _ticker = createTicker(_tick);
     _value = _target;
     _glow = _glowTarget;
     _presence = _presenceTarget;
@@ -297,11 +300,40 @@ class _GaugePainter extends CustomPainter {
 
 // ── Headstock ───────────────────────────────────────────────────────────────
 
-/// A 3 + 3 headstock seen from the front. Low E is bottom-left, high E
-/// bottom-right, as on the guitar in your hands. Tapping a peg picks that
-/// string.
+/// Where one string's peg sits.
+class _PegSpot {
+  final int string;
+
+  /// -1 = left of the head, 1 = right.
+  final int side;
+  final double y;
+
+  /// Drawn string width: thicker for lower notes.
+  final double thickness;
+
+  const _PegSpot(this.string, this.side, this.y, this.thickness);
+}
+
+/// The top of the instrument seen from the front, held upright with the nut
+/// at the bottom — the way you see it when you look down the neck to tune.
+/// Tapping a peg picks that string.
+///
+/// Peg ↔ string mapping, the same rule for every instrument: the strings
+/// cross the nut left to right in playing order (highest-numbered string on
+/// the left, string 1 on the right). The left pegs take the first half of
+/// the strings, nearest the nut first; the right pegs take the rest, running
+/// back down towards the nut:
+///
+/// * guitar, 3 + 3 — left, bottom→top: 6 5 4 (E A D); right, top→bottom:
+///   3 2 1 (G B E).
+/// * ukulele, 2 + 2 — left: 4 (G) below 3 (C); right: 2 (E) above 1 (A).
+/// * bass, 2 + 2 — left: E below A; right: D above G. Five-string, 3 + 2 —
+///   left: B E A; right: D above G.
+/// * violin family, pegbox and scroll — left: G below D; right: A above E,
+///   staggered as real pegs are (from the scroll down: A, D, E, G).
 class TunerHeadstock extends StatelessWidget {
   final GuitarTuning tuning;
+  final HeadShape shape;
 
   /// The string being tuned (lit in the accent colour), or null.
   final int? active;
@@ -315,57 +347,89 @@ class TunerHeadstock extends StatelessWidget {
     required this.active,
     required this.tuned,
     required this.onPeg,
+    this.shape = HeadShape.guitar,
     this.enabled = true,
   });
 
-  // Left column top→bottom: strings 2, 1, 0. Right: 3, 4, 5.
-  static const _left = [2, 1, 0];
-  static const _right = [3, 4, 5];
+  /// Smallest tap target for a peg, whatever size it's drawn.
+  static const _minTap = 48.0;
 
   @override
   Widget build(BuildContext context) {
     final c = Theme.of(context).extension<AppColors>()!;
     final p = TunerPalette.of(context);
+    final n = tuning.strings.length;
+    final nLeft = (n + 1) ~/ 2;
+    final nRight = n - nLeft;
+    final rows = nLeft;
+    final scroll = shape == HeadShape.scroll;
     return LayoutBuilder(
       builder: (context, box) {
         final h = box.maxHeight.isFinite ? box.maxHeight : 250.0;
         final w = box.maxWidth;
-        // Crown above the top pegs, nut below the bottom ones.
-        const crown = 30.0, neck = 40.0;
-        final rowArea = max(h - crown - neck, 90.0);
+        // Room above the top pegs for the crown (or the scroll), and below
+        // the bottom ones for the nut.
+        // Both shrink on short screens so the pegs keep a 44 px+ tap target.
+        final tight = h < 230;
+        final neck = tight ? 30.0 : 40.0;
+        final crown = scroll
+            ? (h - neck - 150).clamp(52.0, 92.0)
+            : (tight ? 16.0 : 30.0);
+        var rowArea = max(h - crown - neck, 90.0);
+        // Two rows of pegs don't need a head as tall as three.
+        if (rows < 3) rowArea = min(rowArea, rows * 84.0);
+        final rowTop = max(h - neck - rowArea, crown);
+        final rowH = rowArea / rows;
         // Keep a gap between pegs on short screens.
-      final peg = min((rowArea / 3.5).clamp(40.0, 56.0), rowArea / 3 - 6);
-        final headW = min(w * 0.42, 170.0);
-        double rowY(int row) => crown + rowArea * (row + 0.5) / 3;
+        final peg = min(
+          (rows < 3 ? rowH * 0.66 : rowArea / 3.5).clamp(40.0, 56.0),
+          rowH - 6,
+        );
+        final headW = switch (shape) {
+          HeadShape.guitar => min(w * 0.42, 170.0),
+          HeadShape.ukulele => min(w * 0.38, 150.0),
+          HeadShape.bass => min(w * 0.44, 180.0),
+          HeadShape.scroll => min(w * 0.3, 112.0),
+        };
         final cx = w / 2;
-        final pegInset = min((w - headW) / 2 - peg - 6, 34.0).clamp(4.0, 34.0);
+        final maxInset = scroll ? 22.0 : 34.0;
+        final pegInset = min(
+          (w - headW) / 2 - peg - 6,
+          maxInset,
+        ).clamp(4.0, maxInset);
         final leftPegX = cx - headW / 2 - pegInset - peg / 2;
         final rightPegX = cx + headW / 2 + pegInset + peg / 2;
 
-        Widget pegAt(int stringIndex, double x, double y) => Positioned(
-          left: x - peg / 2,
-          top: y - peg / 2,
-          width: peg,
-          height: peg,
-          child: _Peg(
-            label: tuning.label(stringIndex),
-            stringNumber: 6 - stringIndex,
-            active: active == stringIndex,
-            tuned: tuned.contains(stringIndex),
-            enabled: enabled,
-            onTap: () => onPeg(stringIndex),
-          ),
-        );
+        double rowY(double row) => rowTop + rowH * (row + 0.5);
+        // The shorter side is centred against the longer; scroll pegs are
+        // staggered a quarter row each way.
+        final rightShift = (nLeft - nRight) / 2;
+        final stagger = scroll ? 0.25 : 0.0;
+        final spots = [
+          for (var s = 0; s < n; s++)
+            _PegSpot(
+              s,
+              s < nLeft ? -1 : 1,
+              s < nLeft
+                  ? rowY(nLeft - 1 - s + stagger)
+                  : rowY(s - nLeft + rightShift - stagger),
+              (3.6 - (tuning.strings[s] - 28) / 36 * 2.6).clamp(1.0, 3.9),
+            ),
+        ];
 
+        final tapW = max(peg, _minTap);
+        final tapH = max(peg, min(_minTap, rowH));
         return Stack(
           clipBehavior: Clip.none,
           children: [
             Positioned.fill(
               child: CustomPaint(
                 painter: _HeadstockPainter(
+                  shape: shape,
+                  tuning: tuning,
                   headW: headW,
                   peg: peg,
-                  rows: [rowY(0), rowY(1), rowY(2)],
+                  spots: spots,
                   leftPegX: leftPegX,
                   rightPegX: rightPegX,
                   active: active,
@@ -375,10 +439,22 @@ class TunerHeadstock extends StatelessWidget {
                 ),
               ),
             ),
-            for (var row = 0; row < 3; row++) ...[
-              pegAt(_left[row], leftPegX, rowY(row)),
-              pegAt(_right[row], rightPegX, rowY(row)),
-            ],
+            for (final spot in spots)
+              Positioned(
+                left: (spot.side < 0 ? leftPegX : rightPegX) - tapW / 2,
+                top: spot.y - tapH / 2,
+                width: tapW,
+                height: tapH,
+                child: _Peg(
+                  size: peg,
+                  label: tuning.label(spot.string),
+                  stringNumber: tuning.stringNumber(spot.string),
+                  active: active == spot.string,
+                  tuned: tuned.contains(spot.string),
+                  enabled: enabled,
+                  onTap: () => onPeg(spot.string),
+                ),
+              ),
           ],
         );
       },
@@ -387,9 +463,11 @@ class TunerHeadstock extends StatelessWidget {
 }
 
 class _HeadstockPainter extends CustomPainter {
+  final HeadShape shape;
+  final GuitarTuning tuning;
   final double headW;
   final double peg;
-  final List<double> rows;
+  final List<_PegSpot> spots;
   final double leftPegX, rightPegX;
   final int? active;
   final Set<int> tuned;
@@ -397,9 +475,11 @@ class _HeadstockPainter extends CustomPainter {
   final TunerPalette palette;
 
   _HeadstockPainter({
+    required this.shape,
+    required this.tuning,
     required this.headW,
     required this.peg,
-    required this.rows,
+    required this.spots,
     required this.leftPegX,
     required this.rightPegX,
     required this.active,
@@ -408,72 +488,166 @@ class _HeadstockPainter extends CustomPainter {
     required this.palette,
   });
 
+  double get _firstY => spots.map((s) => s.y).reduce(min);
+  double get _lastY => spots.map((s) => s.y).reduce(max);
+
   @override
   void paint(Canvas canvas, Size size) {
     final c = colors;
     final cx = size.width / 2;
     canvas.clipRect(Offset.zero & size);
-    final top = max(1.0, rows.first - 46);
+    final scroll = shape == HeadShape.scroll;
+    final firstY = _firstY, lastY = _lastY;
     final bottom = size.height;
-    final neckW = headW * 0.52;
+    final neckW = headW * (scroll ? 0.66 : 0.52);
+    final nutY = bottom - 16;
 
-    // Silhouette: wide crown, tapering to the neck at the bottom.
-    final body = Path()
-      ..moveTo(cx - neckW / 2, bottom)
-      ..cubicTo(
-        cx - neckW / 2,
-        bottom - 40,
-        cx - headW / 2,
-        rows.last + 30,
-        cx - headW / 2,
-        rows.last,
-      )
-      ..lineTo(cx - headW / 2, rows.first)
-      ..cubicTo(
-        cx - headW / 2,
-        top + 10,
-        cx - headW * 0.3,
-        top,
-        cx - headW * 0.12,
-        top + 6,
-      )
-      ..quadraticBezierTo(cx, top + 16, cx + headW * 0.12, top + 6)
-      ..cubicTo(
-        cx + headW * 0.3,
-        top,
-        cx + headW / 2,
-        top + 10,
-        cx + headW / 2,
-        rows.first,
-      )
-      ..lineTo(cx + headW / 2, rows.last)
-      ..cubicTo(
-        cx + headW / 2,
-        rows.last + 30,
-        cx + neckW / 2,
-        bottom - 40,
-        cx + neckW / 2,
-        bottom,
-      )
-      ..close();
-    canvas.drawPath(
-      body,
-      Paint()
-        ..shader = ui.Gradient.linear(Offset(cx, top), Offset(cx, bottom), [
-          c.surfaceElevated,
-          c.surfaceCard,
-        ]),
-    );
-    canvas.drawPath(
-      body,
-      Paint()
-        ..color = c.border
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
+    final double top;
+    final Path body;
+    if (scroll) {
+      // Pegbox narrowing to a throat, with the scroll's circle on top.
+      final boxTop = firstY - peg / 2 - 2;
+      final room = max(boxTop - 2, 20.0);
+      final r = min(room / 1.7, headW * 0.34);
+      final centre = Offset(cx, boxTop - r * 0.7);
+      top = centre.dy - r;
+      final topW = headW * 0.56, throatW = min(headW * 0.3, r * 1.3);
+      final box = Path()
+        ..moveTo(cx - neckW / 2, bottom)
+        ..lineTo(cx - topW / 2, boxTop + 10)
+        ..quadraticBezierTo(cx - topW / 2, boxTop, cx - throatW / 2, boxTop - 8)
+        ..lineTo(cx - throatW / 2, centre.dy)
+        ..lineTo(cx + throatW / 2, centre.dy)
+        ..lineTo(cx + throatW / 2, boxTop - 8)
+        ..quadraticBezierTo(cx + topW / 2, boxTop, cx + topW / 2, boxTop + 10)
+        ..lineTo(cx + neckW / 2, bottom)
+        ..close();
+      body = Path.combine(
+        PathOperation.union,
+        box,
+        Path()..addOval(Rect.fromCircle(center: centre, radius: r)),
+      );
+      _fillBody(canvas, body, cx, top, bottom);
+
+      // The scroll's spiral, winding in to its eye.
+      final spiral = Path();
+      const turns = 1.6, steps = 48;
+      for (var i = 0; i <= steps; i++) {
+        final t = i / steps;
+        final a = pi / 2 + t * turns * 2 * pi;
+        final rr = r * (0.74 - 0.56 * t);
+        final pt = centre + Offset(cos(a), sin(a)) * rr;
+        i == 0 ? spiral.moveTo(pt.dx, pt.dy) : spiral.lineTo(pt.dx, pt.dy);
+      }
+      canvas.drawPath(
+        spiral,
+        Paint()
+          ..color = c.textMuted.withValues(alpha: 0.7)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..strokeCap = StrokeCap.round,
+      );
+
+      // The open slot the strings wind in.
+      final slot = RRect.fromRectAndRadius(
+        Rect.fromLTRB(
+          cx - headW * 0.17,
+          firstY - 15,
+          cx + headW * 0.17,
+          lastY + 15,
+        ),
+        const Radius.circular(9),
+      );
+      canvas.drawRRect(slot, Paint()..color = c.scaffoldBg);
+      canvas.drawRRect(
+        slot,
+        Paint()
+          ..color = c.border
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    } else {
+      top = max(1.0, firstY - 46);
+      body = Path()
+        ..moveTo(cx - neckW / 2, bottom)
+        ..cubicTo(
+          cx - neckW / 2,
+          bottom - 40,
+          cx - headW / 2,
+          lastY + 30,
+          cx - headW / 2,
+          lastY,
+        )
+        ..lineTo(cx - headW / 2, firstY);
+      switch (shape) {
+        case HeadShape.ukulele:
+          // One smooth arch.
+          body
+            ..cubicTo(cx - headW / 2, top + 16, cx - headW * 0.3, top, cx, top)
+            ..cubicTo(
+              cx + headW * 0.3,
+              top,
+              cx + headW / 2,
+              top + 16,
+              cx + headW / 2,
+              firstY,
+            );
+        case HeadShape.bass:
+          // Flat top, square shoulders.
+          body
+            ..cubicTo(
+              cx - headW / 2,
+              top + 8,
+              cx - headW / 2 + 8,
+              top,
+              cx - headW / 2 + 28,
+              top,
+            )
+            ..lineTo(cx + headW / 2 - 28, top)
+            ..cubicTo(
+              cx + headW / 2 - 8,
+              top,
+              cx + headW / 2,
+              top + 8,
+              cx + headW / 2,
+              firstY,
+            );
+        case HeadShape.guitar || HeadShape.scroll:
+          // Two shoulders with a dip between.
+          body
+            ..cubicTo(
+              cx - headW / 2,
+              top + 10,
+              cx - headW * 0.3,
+              top,
+              cx - headW * 0.12,
+              top + 6,
+            )
+            ..quadraticBezierTo(cx, top + 16, cx + headW * 0.12, top + 6)
+            ..cubicTo(
+              cx + headW * 0.3,
+              top,
+              cx + headW / 2,
+              top + 10,
+              cx + headW / 2,
+              firstY,
+            );
+      }
+      body
+        ..lineTo(cx + headW / 2, lastY)
+        ..cubicTo(
+          cx + headW / 2,
+          lastY + 30,
+          cx + neckW / 2,
+          bottom - 40,
+          cx + neckW / 2,
+          bottom,
+        )
+        ..close();
+      _fillBody(canvas, body, cx, top, bottom);
+    }
 
     // Nut.
-    final nutY = bottom - 16;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromCenter(center: Offset(cx, nutY), width: neckW + 6, height: 6),
@@ -483,65 +657,81 @@ class _HeadstockPainter extends CustomPainter {
     );
 
     // Posts, shafts out to the pegs, and strings down to the nut.
+    final n = spots.length;
     final postX = headW * 0.27;
-    const left = [2, 1, 0], right = [3, 4, 5];
-    for (var row = 0; row < 3; row++) {
-      for (final side in [-1, 1]) {
-        final s = side < 0 ? left[row] : right[row];
-        final post = Offset(cx + side * postX, rows[row]);
-        final pegX = side < 0 ? leftPegX : rightPegX;
-        final lit = s == active;
-        final done = tuned.contains(s);
-        final stringColor = lit
-            ? palette.accent
-            : done
-            ? palette.good.withValues(alpha: 0.8)
-            : c.iconSecondary.withValues(alpha: 0.55);
+    final postR = shape == HeadShape.bass ? 9.0 : 7.0;
+    for (final spot in spots) {
+      final s = spot.string;
+      final side = spot.side;
+      final pegX = side < 0 ? leftPegX : rightPegX;
+      final lit = s == active;
+      final done = tuned.contains(s);
+      final stringColor = lit
+          ? palette.accent
+          : done
+          ? palette.good.withValues(alpha: 0.8)
+          : c.iconSecondary.withValues(alpha: 0.55);
+      // The string's slot on the nut: highest-numbered string far left.
+      final nutX = cx - neckW / 2 + 6 + (neckW - 12) * s / (n - 1);
+      // Where the string starts: its post, or (on a scroll) its turn round
+      // the peg shaft inside the slot.
+      final post = scroll
+          ? Offset(cx + (nutX - cx) * 0.45, spot.y)
+          : Offset(cx + side * postX, spot.y);
 
-        // Shaft, stopping at the peg's edge.
+      // Shaft, from the peg's edge. A scroll's pegs run right through the
+      // pegbox.
+      canvas.drawLine(
+        scroll ? Offset(cx - side * headW * 0.24, spot.y) : post,
+        Offset(pegX - side * peg / 2, spot.y),
+        Paint()
+          ..color = c.border
+          ..strokeWidth = 5
+          ..strokeCap = StrokeCap.round,
+      );
+
+      final thickness = spot.thickness;
+      if (lit) {
         canvas.drawLine(
           post,
-          Offset(pegX - side * peg / 2, rows[row]),
+          Offset(nutX, nutY),
           Paint()
-            ..color = c.border
+            ..color = palette.accent.withValues(alpha: 0.45)
+            ..strokeWidth = thickness + 5
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+        );
+      }
+      canvas.drawLine(
+        post,
+        Offset(nutX, nutY),
+        Paint()
+          ..color = stringColor
+          ..strokeWidth = thickness
+          ..strokeCap = StrokeCap.round,
+      );
+      canvas.drawLine(
+        Offset(nutX, nutY),
+        Offset(nutX, bottom),
+        Paint()
+          ..color = stringColor
+          ..strokeWidth = thickness,
+      );
+
+      if (scroll) {
+        // A few turns of string round the shaft.
+        canvas.drawLine(
+          post - const Offset(0, 4),
+          post + const Offset(0, 4),
+          Paint()
+            ..color = lit ? palette.accent : c.textMuted
             ..strokeWidth = 5
             ..strokeCap = StrokeCap.round,
         );
-
-        // String: from the post to its slot on the nut (low E far left).
-        final nutX = cx - neckW / 2 + 6 + (neckW - 12) * s / 5;
-        final thickness = 2.6 - s * 0.32;
-        if (lit) {
-          canvas.drawLine(
-            post,
-            Offset(nutX, nutY),
-            Paint()
-              ..color = palette.accent.withValues(alpha: 0.45)
-              ..strokeWidth = thickness + 5
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
-          );
-        }
-        canvas.drawLine(
-          post,
-          Offset(nutX, nutY),
-          Paint()
-            ..color = stringColor
-            ..strokeWidth = thickness
-            ..strokeCap = StrokeCap.round,
-        );
-        canvas.drawLine(
-          Offset(nutX, nutY),
-          Offset(nutX, bottom),
-          Paint()
-            ..color = stringColor
-            ..strokeWidth = thickness,
-        );
-
-        // Post.
-        canvas.drawCircle(post, 7, Paint()..color = c.scaffoldBg);
+      } else {
+        canvas.drawCircle(post, postR, Paint()..color = c.scaffoldBg);
         canvas.drawCircle(
           post,
-          7,
+          postR,
           Paint()
             ..color = lit ? palette.accent : c.textMuted
             ..style = PaintingStyle.stroke
@@ -551,18 +741,49 @@ class _HeadstockPainter extends CustomPainter {
     }
   }
 
+  void _fillBody(
+    Canvas canvas,
+    Path body,
+    double cx,
+    double top,
+    double bottom,
+  ) {
+    canvas.drawPath(
+      body,
+      Paint()
+        ..shader = ui.Gradient.linear(Offset(cx, top), Offset(cx, bottom), [
+          colors.surfaceElevated,
+          colors.surfaceCard,
+        ]),
+    );
+    canvas.drawPath(
+      body,
+      Paint()
+        ..color = colors.border
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+  }
+
   @override
   bool shouldRepaint(_HeadstockPainter o) =>
       o.active != active ||
       o.tuned.length != tuned.length ||
       !o.tuned.containsAll(tuned) ||
+      o.shape != shape ||
+      o.tuning != tuning ||
       o.headW != headW ||
+      o.peg != peg ||
+      o._firstY != _firstY ||
+      o._lastY != _lastY ||
       o.colors != colors ||
       o.palette.accent != palette.accent ||
       o.leftPegX != leftPegX;
 }
 
 class _Peg extends StatelessWidget {
+  /// Diameter of the drawn peg; the tap target is the whole widget.
+  final double size;
   final String label;
   final int stringNumber;
   final bool active;
@@ -571,6 +792,7 @@ class _Peg extends StatelessWidget {
   final VoidCallback onTap;
 
   const _Peg({
+    required this.size,
     required this.label,
     required this.stringNumber,
     required this.active,
@@ -597,82 +819,93 @@ class _Peg extends StatelessWidget {
       button: true,
       selected: active,
       label: 'String $stringNumber, $label${tuned ? ', in tune' : ''}',
+      onTap: enabled ? onTap : null,
       excludeSemantics: true,
-      child: TweenAnimationBuilder<double>(
-        // Pops once when the string is tuned.
-        key: ValueKey(tuned),
-        tween: Tween(begin: tuned ? 1.18 : 1, end: 1),
-        duration: const Duration(milliseconds: 420),
-        curve: Curves.elasticOut,
-        builder: (context, scale, child) =>
-            Transform.scale(scale: scale, child: child),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Positioned.fill(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: fill,
-                  border: Border.all(
-                    color: border,
-                    width: active || tuned ? 2 : 1.5,
-                  ),
-                  boxShadow: active
-                      ? [
-                          BoxShadow(
-                            color: p.accent.withValues(alpha: 0.35),
-                            blurRadius: 14,
-                          ),
-                        ]
-                      : null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: enabled ? onTap : null,
+        child: Center(
+          child: SizedBox(
+            width: size,
+            height: size,
+            child: _circle(c, p, border, fill),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _circle(AppColors c, TunerPalette p, Color border, Color fill) {
+    return TweenAnimationBuilder<double>(
+      // Pops once when the string is tuned.
+      key: ValueKey(tuned),
+      tween: Tween(begin: tuned ? 1.18 : 1, end: 1),
+      duration: const Duration(milliseconds: 420),
+      curve: Curves.elasticOut,
+      builder: (context, scale, child) =>
+          Transform.scale(scale: scale, child: child),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: fill,
+                border: Border.all(
+                  color: border,
+                  width: active || tuned ? 2 : 1.5,
                 ),
-                child: Material(
-                  type: MaterialType.transparency,
-                  shape: const CircleBorder(),
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: enabled ? onTap : null,
-                    child: Center(
-                      child: Text(
-                        label,
-                        style: TextStyle(
-                          color: active
-                              ? c.textPrimary
-                              : tuned
-                              ? p.good
-                              : c.textPrimary,
-                          fontSize: label.length > 1 ? 16 : 19,
-                          fontWeight: FontWeight.w800,
+                boxShadow: active
+                    ? [
+                        BoxShadow(
+                          color: p.accent.withValues(alpha: 0.35),
+                          blurRadius: 14,
                         ),
+                      ]
+                    : null,
+              ),
+              child: Material(
+                type: MaterialType.transparency,
+                shape: const CircleBorder(),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  onTap: enabled ? onTap : null,
+                  child: Center(
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        color: active
+                            ? c.textPrimary
+                            : tuned
+                            ? p.good
+                            : c.textPrimary,
+                        fontSize: label.length > 1 ? 16 : 19,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-            if (tuned)
-              Positioned(
-                right: -2,
-                top: -2,
-                child: Container(
-                  width: 20,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    color: p.good,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: c.scaffoldBg, width: 2),
-                  ),
-                  child: Icon(
-                    Icons.check_rounded,
-                    size: 12,
-                    color: c.scaffoldBg,
-                  ),
+          ),
+          if (tuned)
+            Positioned(
+              right: -2,
+              top: -2,
+              child: Container(
+                width: 20,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: p.good,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: c.scaffoldBg, width: 2),
                 ),
+                child: Icon(Icons.check_rounded, size: 12, color: c.scaffoldBg),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
